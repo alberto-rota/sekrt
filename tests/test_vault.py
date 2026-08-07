@@ -94,6 +94,15 @@ def test_valid_names():
         assert validate_name(good) == good
 
 
+def test_short_passphrase_rejected(tmp_path, vault):
+    with pytest.raises(VaultError):
+        Vault(tmp_path / "weak").create("hunter2")
+    v, key = vault
+    with pytest.raises(VaultError):
+        v.rekey(key, "short")
+    assert v.unlock(PASSPHRASE) == key  # vault untouched
+
+
 def test_rekey(vault):
     v, key = vault
     v.write(key, "keep/me", new_entry("password", {"password": "x"}))

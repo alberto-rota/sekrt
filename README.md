@@ -131,6 +131,16 @@ tupacs status                   vault, remote, session info
 - **Threat model**: protects secrets at rest and in your git remote. It does
   **not** protect against an attacker with root/physical access to your
   unlocked machine — nothing userspace does.
+- **Your passphrase is the whole game**: anyone who obtains the vault files
+  (including whoever hosts your sync remote) can attempt an offline
+  brute-force. scrypt makes each guess expensive, but a weak passphrase
+  falls anyway — use a long one. tupacs enforces a minimum of 8 characters;
+  treat that as a floor, not a target.
+- **A compromised remote** cannot read entry contents or swap ciphertexts
+  between names (AEAD name binding), but it *can* delete entries, serve you
+  an old version of the vault (rollback), or corrupt the vault config. If
+  `tupacs sync` suddenly reports missing entries or a passphrase failure,
+  investigate before typing your passphrase anywhere else.
 
 Found a vulnerability? Please report it privately via GitHub security
 advisories rather than a public issue.

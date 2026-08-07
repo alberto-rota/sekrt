@@ -6,6 +6,7 @@ import difflib
 import functools
 import json
 import os
+import re
 from pathlib import Path
 
 import click
@@ -23,8 +24,17 @@ from tupacs.vault import (
     primary_field,
 )
 
-SENSITIVE_FIELDS = {"password", "key", "secret", "token", "private", "content"}
+SENSITIVE_FIELDS = {"password", "key", "secret", "token", "private", "content", "notes"}
 MASK = "********"
+
+# C0/C1 control characters minus \t and \n — entry data can originate from
+# files other people authored (`tupacs env push`), so `show` must not let
+# ANSI escape sequences reach the terminal.
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def _printable(value: str) -> str:
+    return _CONTROL_CHARS.sub("", value)
 
 ALIASES = {
     "insert": "add",
@@ -275,6 +285,7 @@ def show(name: str, reveal: bool) -> None:
     click.echo(f"  type: {entry['type']}")
     for field, value in entry["data"].items():
         hidden = field in SENSITIVE_FIELDS and not reveal
+        value = _printable(value)
         if "\n" in value:
             if hidden:
                 click.echo(f"  {field}: ({len(value.splitlines())} lines — use --reveal)")
