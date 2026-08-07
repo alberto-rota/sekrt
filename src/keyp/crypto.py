@@ -1,11 +1,11 @@
-"""Encryption primitives for tupacss.
+"""Encryption primitives for keyp.
 
 Every entry is encrypted independently with AES-256-GCM. The 256-bit key is
 derived from the vault passphrase with scrypt (parameters stored, per-vault
 random salt). Each entry uses its logical name as GCM associated data, so a
 ciphertext cannot be silently swapped to a different entry name.
 
-Entry file format: ``b"TPS1" || nonce (12 bytes) || ciphertext+tag``.
+Entry file format: ``b"KYP1" || nonce (12 bytes) || ciphertext+tag``.
 """
 
 from __future__ import annotations
@@ -18,10 +18,10 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
-MAGIC = b"TPS1"
+MAGIC = b"KYP1"
 KEY_LEN = 32
 NONCE_LEN = 12
-KEYCHECK_PLAINTEXT = b"tupacss keycheck v1"
+KEYCHECK_PLAINTEXT = b"keyp keycheck v1"
 KEYCHECK_AAD = b"keycheck"
 
 DEFAULT_SCRYPT_N = 2**15  # ~32 MiB, <100ms on a modern laptop
@@ -52,9 +52,9 @@ class KdfParams:
 
     @classmethod
     def generate(cls) -> KdfParams:
-        n = int(os.environ.get("TUPACSS_SCRYPT_N", DEFAULT_SCRYPT_N))
+        n = int(os.environ.get("KEYP_SCRYPT_N", DEFAULT_SCRYPT_N))
         if n < 2**10 or n & (n - 1):
-            raise CryptoError("TUPACSS_SCRYPT_N must be a power of two >= 1024")
+            raise CryptoError("KEYP_SCRYPT_N must be a power of two >= 1024")
         return cls(salt=os.urandom(16), n=n)
 
     def to_dict(self) -> dict:
@@ -86,7 +86,7 @@ def encrypt(key: bytes, plaintext: bytes, aad: bytes = b"") -> bytes:
 
 def decrypt(key: bytes, blob: bytes, aad: bytes = b"") -> bytes:
     if not blob.startswith(MAGIC) or len(blob) < len(MAGIC) + NONCE_LEN + 16:
-        raise DecryptionError("not a tupacss entry (bad header)")
+        raise DecryptionError("not a keyp entry (bad header)")
     nonce = blob[len(MAGIC) : len(MAGIC) + NONCE_LEN]
     ciphertext = blob[len(MAGIC) + NONCE_LEN :]
     try:

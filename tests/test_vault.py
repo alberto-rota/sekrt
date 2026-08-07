@@ -1,7 +1,7 @@
 import pytest
 
-from tupacss.crypto import WrongPassphraseError
-from tupacss.vault import (
+from keyp.crypto import WrongPassphraseError
+from keyp.vault import (
     EntryExistsError,
     EntryNotFoundError,
     InvalidNameError,
@@ -83,7 +83,7 @@ def test_delete(vault):
 def test_invalid_names(vault):
     v, key = vault
     for bad in ("", "/abs", "a//b", "../escape", "a/../b", ".git/config",
-                ".tupacss.json", "trailing/", "sp ace-ok/../nope"):
+                ".keyp.json", "trailing/", "sp ace-ok/../nope"):
         with pytest.raises(InvalidNameError):
             v.write(key, bad, new_entry("password", {"password": "x"}))
 
@@ -114,5 +114,5 @@ def test_uninitialized_vault(tmp_path):
 def test_entry_file_permissions(vault):
     v, key = vault
     v.write(key, "perm", new_entry("password", {"password": "x"}))
-    mode = (v.path / "perm.tps").stat().st_mode & 0o777
+    mode = (v.path / "perm.kyp").stat().st_mode & 0o777
     assert mode == 0o600

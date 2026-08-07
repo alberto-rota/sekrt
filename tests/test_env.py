@@ -1,7 +1,7 @@
 import pytest
 
-from tupacss import envtools
-from tupacss.envtools import normalize_remote_url
+from keyp import envtools
+from keyp.envtools import normalize_remote_url
 
 from .conftest import make_git_repo, requires_git
 
@@ -111,7 +111,7 @@ def test_push_missing_file(vault, tmp_path):
 
 def test_list_all(vault, tmp_path):
     v, key = vault
-    from tupacss.vault import new_entry
+    from keyp.vault import new_entry
 
     v.write(key, "env/github.com/a/b/.env", new_entry("env", {"content": "X=1\n"}))
     assert envtools.list_all(v) == ["github.com/a/b/.env"]

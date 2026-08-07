@@ -1,7 +1,7 @@
 """Git-backed sync for the vault directory.
 
 The vault is a plain git repository: every mutation is auto-committed, and
-``tupacss sync`` does pull --rebase + push against ``origin``. Only the
+``keyp sync`` does pull --rebase + push against ``origin``. Only the
 system ``git`` binary is used (via subprocess) — no GitPython dependency.
 All functions degrade gracefully when git is missing.
 """
@@ -12,8 +12,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-FALLBACK_IDENTITY = ["-c", "user.name=tupacss", "-c", "user.email=tupacss@localhost"]
-GITATTRIBUTES = "*.tps binary\n"
+FALLBACK_IDENTITY = ["-c", "user.name=keyp", "-c", "user.email=keyp@localhost"]
+GITATTRIBUTES = "*.kyp binary\n"
 
 
 def has_git() -> bool:
@@ -100,10 +100,10 @@ def sync(path: Path) -> tuple[bool, str]:
     if not has_git():
         return False, "git is not installed"
     if not is_repo(path):
-        return False, "vault is not a git repository — re-run `tupacss init`"
+        return False, "vault is not a git repository — re-run `keyp init`"
     remote = get_remote(path)
     if remote is None:
-        return False, "no remote configured — run `tupacss remote <url>` first"
+        return False, "no remote configured — run `keyp remote <url>` first"
 
     branch = current_branch(path)
     pull = _run(
@@ -113,7 +113,7 @@ def sync(path: Path) -> tuple[bool, str]:
         err = pull.stderr.lower()
         if "couldn't find remote ref" not in err and "does not appear" not in err:
             _run(path, "rebase", "--abort")
-            return False, "pull failed (resolve manually with `tupacss git status`): " + _short(
+            return False, "pull failed (resolve manually with `keyp git status`): " + _short(
                 pull.stderr
             )
 

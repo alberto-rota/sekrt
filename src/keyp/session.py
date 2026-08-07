@@ -1,4 +1,4 @@
-"""Short-lived unlocked-key cache (`tupacss unlock` / `tupacss lock`).
+"""Short-lived unlocked-key cache (`keyp unlock` / `keyp lock`).
 
 The derived vault key is cached in a user-private directory so repeated
 commands don't re-prompt for the passphrase — the moral equivalent of
@@ -37,7 +37,7 @@ def private_tmpdir() -> Path | None:
     for base in candidates:
         if not base.is_dir() or not os.access(base, os.W_OK):
             continue
-        d = base / f"tupacss-{uid}"
+        d = base / f"keyp-{uid}"
         try:
             d.mkdir(mode=0o700, exist_ok=True)
             os.chmod(d, 0o700)
