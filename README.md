@@ -1,7 +1,7 @@
-# 🔐 keyp
+# 🔐 tupacs
 
-> **keep** your **keys**. And your passwords, SSH keys and `.env` files —
-> encrypted, in your own git repo, four keystrokes away.
+> **TU**i **PA**ssword & **C**redential **S**torage.
+> All eyez on your secrets — but only you can read them.
 
 A fast TUI + CLI secret manager for developers and DevOps engineers.
 Like [`pass`](https://www.passwordstore.org/), but with a modern
@@ -9,71 +9,71 @@ Like [`pass`](https://www.passwordstore.org/), but with a modern
 **SSH keypair** and **`.env` file** support, and painless sync through any
 private git remote (GitHub, GitLab, self-hosted — anything).
 
-![keyp TUI](docs/screenshot.svg)
+![tupacs TUI](docs/screenshot.svg)
 
 - 🔑 **Passwords & API keys** — organised in folders, generated, copied with auto-clearing clipboard
 - 📄 **`.env` files** — encrypt the `.env` of any repo into your vault, restore it in any fresh clone with one command
 - 🗝️ **SSH keypairs** — import, generate (ed25519), and restore with correct permissions
-- ☁️ **Git sync** — every change is a commit; `keyp sync` pushes/pulls a private repo
+- ☁️ **Git sync** — every change is a commit; `tupacs sync` pushes/pulls a private repo
 - 🖥️ **TUI + CLI** — a full keyboard-driven interface *and* script-friendly commands
 - 🪶 **Lightweight** — three dependencies (`textual`, `click`, `cryptography`), no daemon, no sudo, no gpg setup
 
 ## Install
 
 ```bash
-uv tool install keyp      # recommended
-# or: pipx install keyp
-# or: pip install --user keyp
+uv tool install tupacs      # recommended
+# or: pipx install tupacs
+# or: pip install --user tupacs
 ```
 
 ## Quickstart
 
 ```bash
-keyp init --remote git@github.com:you/secrets.git   # create vault + connect a PRIVATE repo
-keyp add work/github -u alberto -g                  # generate & store a password
-keyp get work/github -c                             # copy it (clipboard clears in 45s)
-keyp                                                # open the TUI
-keyp sync                                           # pull + push the encrypted vault
+tupacs init --remote git@github.com:you/secrets.git   # create vault + connect a PRIVATE repo
+tupacs add work/github -u alberto -g                  # generate & store a password
+tupacs get work/github -c                             # copy it (clipboard clears in 45s)
+tupacs                                                # open the TUI
+tupacs sync                                           # pull + push the encrypted vault
 ```
 
-Run `keyp unlock` once and commands stop prompting for your passphrase for
+Run `tupacs unlock` once and commands stop prompting for your passphrase for
 an hour (cached in a RAM-backed, user-private runtime dir — like gpg-agent,
 without the agent).
 
 ## The `.env` workflow
 
 `.env` files never land in your project repos — so every fresh clone starts
-with a scavenger hunt. keyp ends it:
+with a scavenger hunt. tupacs ends it:
 
 ```bash
 cd ~/code/my-saas        # any git repo
-keyp env push         # encrypts .env into the vault, keyed by the repo's origin URL
-keyp sync
+tupacs env push         # encrypts .env into the vault, keyed by the repo's origin URL
+tupacs sync
 ```
 
 Months later, on another machine:
 
 ```bash
 git clone git@github.com:you/my-saas.git && cd my-saas
-keyp env pull         # .env is back, byte for byte (0600 perms)
+tupacs env pull         # .env is back, byte for byte (0600 perms)
 ```
 
-It works with multiple env files per repo (`keyp env push apps/api/.env.production`),
+It works with multiple env files per repo (`tupacs env push apps/api/.env.production`),
 detects unchanged/modified files, never overwrites local edits without
-`--force`, and `keyp env ls` shows everything you've stored.
+`--force`, and `tupacs env ls` shows everything you've stored.
 
 ## SSH keys
 
 ```bash
-keyp ssh add laptop --key ~/.ssh/id_ed25519    # import an existing keypair
-keyp ssh add deploy --generate                 # or generate a fresh ed25519 key
-keyp ssh pub deploy                            # print the public key for GitHub
-keyp ssh restore deploy --dir ~/.ssh           # on a new machine: 0600/0644, done
+tupacs ssh add laptop --key ~/.ssh/id_ed25519    # import an existing keypair
+tupacs ssh add deploy --generate                 # or generate a fresh ed25519 key
+tupacs ssh pub deploy                            # print the public key for GitHub
+tupacs ssh restore deploy --dir ~/.ssh           # on a new machine: 0600/0644, done
 ```
 
 ## The TUI
 
-`keyp` with no arguments opens the interface: a folder tree of your vault,
+`tupacs` with no arguments opens the interface: a folder tree of your vault,
 fuzzy filtering, masked detail view, add/edit forms with a password generator,
 and one-key sync.
 
@@ -90,25 +90,25 @@ and one-key sync.
 ## CLI reference
 
 ```text
-keyp init [--remote URL]      create a vault
-keyp add NAME [-u USER] [-g]  add password/api_key/note   (alias: insert)
-keyp get NAME [-c] [-f FIELD] print or copy a secret
-keyp show NAME [--reveal]     show all fields
-keyp ls [PREFIX]              list entries                (alias: list)
-keyp find QUERY               search names                (alias: search)
-keyp edit NAME                edit fields in $EDITOR
-keyp mv OLD NEW               rename                      (alias: rename)
-keyp rm NAME [-f]             delete                      (alias: remove)
-keyp generate [LEN] [--token] generate without storing
-keyp env push|pull|ls|show|rm .env files per repository
-keyp ssh add|restore|ls|pub   SSH keypairs
-keyp remote URL               set the sync remote
-keyp sync                     pull --rebase + push
-keyp autosync on|off          push automatically on every change
-keyp git <args...>            raw git inside the vault
-keyp unlock [-t MIN] / lock   cache / forget the vault key
-keyp passwd                   change passphrase (re-encrypts everything)
-keyp status                   vault, remote, session info
+tupacs init [--remote URL]      create a vault
+tupacs add NAME [-u USER] [-g]  add password/api_key/note   (alias: insert)
+tupacs get NAME [-c] [-f FIELD] print or copy a secret
+tupacs show NAME [--reveal]     show all fields
+tupacs ls [PREFIX]              list entries                (alias: list)
+tupacs find QUERY               search names                (alias: search)
+tupacs edit NAME                edit fields in $EDITOR
+tupacs mv OLD NEW               rename                      (alias: rename)
+tupacs rm NAME [-f]             delete                      (alias: remove)
+tupacs generate [LEN] [--token] generate without storing
+tupacs env push|pull|ls|show|rm .env files per repository
+tupacs ssh add|restore|ls|pub   SSH keypairs
+tupacs remote URL               set the sync remote
+tupacs sync                     pull --rebase + push
+tupacs autosync on|off          push automatically on every change
+tupacs git <args...>            raw git inside the vault
+tupacs unlock [-t MIN] / lock   cache / forget the vault key
+tupacs passwd                   change passphrase (re-encrypts everything)
+tupacs status                   vault, remote, session info
 ```
 
 ## Security model
@@ -121,9 +121,9 @@ keyp status                   vault, remote, session info
 - **What the remote sees**: entry *names* and folder structure (like `pass`),
   timestamps, and commit history. Entry *contents* are always ciphertext.
   Use names accordingly (`work/github`, not `password-is-hunter2`).
-- **Session cache**: `keyp unlock` stores the derived key (never the
+- **Session cache**: `tupacs unlock` stores the derived key (never the
   passphrase) in `$XDG_RUNTIME_DIR` — tmpfs on Linux: RAM-backed, user-only
-  (0600), wiped on logout — with a TTL. `keyp lock` clears it immediately.
+  (0600), wiped on logout — with a TTL. `tupacs lock` clears it immediately.
 - **Clipboard**: auto-clears after 45 s, and only if it still holds the copied
   value. Secrets are never passed through argv.
 - **Files**: vault dir `0700`, entries `0600`, atomic writes, restored SSH
@@ -139,16 +139,16 @@ advisories rather than a public issue.
 
 | What | Default | Override |
 | --- | --- | --- |
-| Vault directory | `~/.local/share/keyp` | `$KEYP_VAULT` |
-| Passphrase (CI/scripts) | interactive prompt | `$KEYP_PASSPHRASE` |
-| Editor for `keyp edit` | `$EDITOR` | `$VISUAL` |
+| Vault directory | `~/.local/share/tupacs` | `$TUPACS_VAULT` |
+| Passphrase (CI/scripts) | interactive prompt | `$TUPACS_PASSPHRASE` |
+| Editor for `tupacs edit` | `$EDITOR` | `$VISUAL` |
 
 The vault is a plain git repository — inspect it any time with
-`keyp git log`.
+`tupacs git log`.
 
 ## Why not just `pass`?
 
-`pass` is excellent, and keyp borrows its best idea (one encrypted file
+`pass` is excellent, and tupacs borrows its best idea (one encrypted file
 per secret, git-friendly). Differences: no GPG key management — a single
 passphrase with scrypt+AES-GCM; a real TUI; structured entries (username,
 URL, notes — not just a text blob); and purpose-built `.env` and SSH-key
@@ -157,19 +157,19 @@ workflows.
 ## Development
 
 ```bash
-git clone https://github.com/albertorota/keyp && cd keyp
+git clone https://github.com/albertorota/tupacs && cd tupacs
 uv sync                 # installs everything incl. dev deps
 uv run pytest           # tests
 uv run ruff check .     # lint
-uv run keyp --help
+uv run tupacs --help
 ```
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Roadmap
 
-- [ ] `keyp grep` — search inside decrypted entries
-- [ ] TOTP / 2FA codes (`keyp otp NAME`)
+- [ ] `tupacs grep` — search inside decrypted entries
+- [ ] TOTP / 2FA codes (`tupacs otp NAME`)
 - [ ] Import from `pass`, Bitwarden, 1Password CSV
 - [ ] Diceware passphrase generation
 - [ ] Windows clipboard & session-cache support

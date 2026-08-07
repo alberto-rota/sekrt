@@ -14,7 +14,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from keyp.vault import Vault, VaultError, new_entry
+from tupacs.vault import Vault, VaultError, new_entry
 
 SSH_PREFIX = "ssh"
 

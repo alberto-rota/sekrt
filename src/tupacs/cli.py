@@ -1,4 +1,4 @@
-"""keyp command-line interface."""
+"""tupacs command-line interface."""
 
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ from pathlib import Path
 
 import click
 
-from keyp import __version__, clipboard, envtools, gitsync, session, sshtools
-from keyp.clipboard import ClipboardError
-from keyp.crypto import CryptoError, WrongPassphraseError
-from keyp.generate import DEFAULT_LENGTH, generate_password, generate_token
-from keyp.util import EditorError, edit_text
-from keyp.vault import (
+from tupacs import __version__, clipboard, envtools, gitsync, session, sshtools
+from tupacs.clipboard import ClipboardError
+from tupacs.crypto import CryptoError, WrongPassphraseError
+from tupacs.generate import DEFAULT_LENGTH, generate_password, generate_token
+from tupacs.util import EditorError, edit_text
+from tupacs.vault import (
     PRIMARY_FIELD,
     Vault,
     VaultError,
@@ -58,17 +58,17 @@ def get_vault(must_exist: bool = True) -> Vault:
     vault = Vault()
     if must_exist and not vault.initialized:
         raise click.ClickException(
-            f"no vault found at {vault.path} — create one with `keyp init`"
+            f"no vault found at {vault.path} — create one with `tupacs init`"
         )
     return vault
 
 
 def obtain_key(vault: Vault) -> bytes:
-    """Session cache -> $KEYP_PASSPHRASE -> interactive prompt."""
+    """Session cache -> $TUPACS_PASSPHRASE -> interactive prompt."""
     key = session.load_key(vault.path)
     if key is not None and vault.verify_key(key):
         return key
-    phrase = os.environ.get("KEYP_PASSPHRASE")
+    phrase = os.environ.get("TUPACS_PASSPHRASE")
     if phrase is not None:
         return vault.unlock(phrase)
     for attempt in range(3):
@@ -87,16 +87,16 @@ def _suggest(vault: Vault, name: str) -> str:
 
 
 @click.group(cls=AliasedGroup, invoke_without_command=True)
-@click.version_option(version=__version__, prog_name="keyp")
+@click.version_option(version=__version__, prog_name="tupacs")
 @click.pass_context
 def main(ctx: click.Context) -> None:
-    """🔐 keyp — passwords, API keys, SSH keys and .env files, encrypted and git-synced.
+    """🔐 tupacs — passwords, API keys, SSH keys and .env files, encrypted and git-synced.
 
-    Run without arguments to open the TUI. Vault location: ~/.local/share/keyp
-    (override with $KEYP_VAULT).
+    Run without arguments to open the TUI. Vault location: ~/.local/share/tupacs
+    (override with $TUPACS_VAULT).
     """
     if ctx.invoked_subcommand is None:
-        from keyp.tui.app import run_tui
+        from tupacs.tui.app import run_tui
 
         run_tui()
 
@@ -112,7 +112,7 @@ def init(remote_url: str | None) -> None:
     vault = get_vault(must_exist=False)
     if vault.initialized:
         raise click.ClickException(f"vault already exists at {vault.path}")
-    phrase = os.environ.get("KEYP_PASSPHRASE") or click.prompt(
+    phrase = os.environ.get("TUPACS_PASSPHRASE") or click.prompt(
         "Choose a vault passphrase", hide_input=True, confirmation_prompt=True
     )
     vault.create(phrase)
@@ -120,9 +120,9 @@ def init(remote_url: str | None) -> None:
         gitsync.set_remote(vault.path, remote_url)
     click.secho(f"✔ vault created at {vault.path}", fg="green")
     if remote_url:
-        click.echo(f"  remote set to {remote_url} — push with `keyp sync`")
+        click.echo(f"  remote set to {remote_url} — push with `tupacs sync`")
     else:
-        click.echo("  connect a private GitHub repo with `keyp remote <url>`")
+        click.echo("  connect a private GitHub repo with `tupacs remote <url>`")
 
 
 @main.command()
@@ -169,7 +169,7 @@ def status() -> None:
     ttl = session.remaining(vault.path)
     click.echo(f"vault     {vault.path}")
     click.echo(f"entries   {len(entries)}")
-    click.echo(f"remote    {remote or '(none — set with `keyp remote <url>`)'}")
+    click.echo(f"remote    {remote or '(none — set with `tupacs remote <url>`)'}")
     click.echo(f"autosync  {'on' if vault.auto_sync else 'off'}")
     click.echo(f"session   {'unlocked, ' + str(ttl // 60) + ' min left' if ttl else 'locked'}")
 
@@ -194,9 +194,9 @@ def add(name, type_, username, url, notes, generate_, length, no_symbols, show, 
     """Add an entry (a password, an API key, or a note).
 
     \b
-      keyp add work/github -u alberto -g
-      keyp add cloud/aws-key -t api_key
-      keyp add wifi/office -t note --notes "WPA2 ..."
+      tupacs add work/github -u alberto -g
+      tupacs add cloud/aws-key -t api_key
+      tupacs add wifi/office -t note --notes "WPA2 ..."
     """
     vault = get_vault()
     key = obtain_key(vault)
@@ -233,7 +233,7 @@ def add(name, type_, username, url, notes, generate_, length, no_symbols, show, 
         elif copied:
             click.echo(f"  generated {length}-char secret copied to clipboard (clears in 45s)")
         else:
-            click.echo("  generated secret stored — reveal with `keyp get " + name + "`")
+            click.echo("  generated secret stored — reveal with `tupacs get " + name + "`")
 
 
 @main.command()
@@ -294,7 +294,7 @@ def ls(prefix: str) -> None:
     vault = get_vault()
     names = vault.list_entries(prefix)
     if not names:
-        click.echo("(vault is empty — add something with `keyp add`)" if not prefix
+        click.echo("(vault is empty — add something with `tupacs add`)" if not prefix
                    else f"(nothing under {prefix!r})")
         return
     for name in names:
@@ -393,7 +393,7 @@ def remote(url: str) -> None:
     vault = get_vault()
     gitsync.set_remote(vault.path, url)
     click.secho(f"✔ remote set to {url}", fg="green")
-    click.echo("  run `keyp sync` to push, `keyp autosync on` to push automatically")
+    click.echo("  run `tupacs sync` to push, `tupacs autosync on` to push automatically")
 
 
 @main.command()
@@ -421,7 +421,7 @@ def autosync(state: str) -> None:
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 @friendly_errors
 def git(args: tuple[str, ...]) -> None:
-    """Run a raw git command inside the vault (e.g. `keyp git log --oneline`)."""
+    """Run a raw git command inside the vault (e.g. `tupacs git log --oneline`)."""
     import subprocess
 
     vault = get_vault()
@@ -474,7 +474,7 @@ def env_ls() -> None:
     vault = get_vault()
     stored = envtools.list_all(vault)
     if not stored:
-        click.echo("(no env files stored — run `keyp env push` inside a repo)")
+        click.echo("(no env files stored — run `tupacs env push` inside a repo)")
         return
     _, current = envtools.current_context()
     for item in stored:
@@ -532,7 +532,7 @@ def ssh_add(name, key_path, generate_, comment, force) -> None:
     vault = get_vault()
     key = obtain_key(vault)
     if generate_:
-        comment = comment or f"{name}@keyp"
+        comment = comment or f"{name}@tupacs"
         private, public = sshtools.generate_ed25519(comment)
         filename = ""
     else:
@@ -597,8 +597,8 @@ def ssh_pub(name: str) -> None:
 @main.command()
 @friendly_errors
 def tui() -> None:
-    """Open the interactive TUI (same as running `keyp` with no arguments)."""
-    from keyp.tui.app import run_tui
+    """Open the interactive TUI (same as running `tupacs` with no arguments)."""
+    from tupacs.tui.app import run_tui
 
     run_tui()
 

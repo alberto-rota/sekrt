@@ -1,7 +1,7 @@
 import pytest
 
-from keyp.tui.app import KeypApp
-from keyp.vault import new_entry
+from tupacs.tui.app import TupacsApp
+from tupacs.vault import new_entry
 
 
 @pytest.fixture
@@ -14,7 +14,7 @@ def populated_vault(vault):
 
 async def test_tree_lists_entries(populated_vault):
     v, key = populated_vault
-    app = KeypApp(vault=v, key=key)
+    app = TupacsApp(vault=v, key=key)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         tree = app.query_one("#tree")
@@ -24,7 +24,7 @@ async def test_tree_lists_entries(populated_vault):
 
 async def test_select_shows_masked_detail(populated_vault):
     v, key = populated_vault
-    app = KeypApp(vault=v, key=key)
+    app = TupacsApp(vault=v, key=key)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         leaf = app.query_one("#tree").root.children[0].children[0]
@@ -41,7 +41,7 @@ async def test_select_shows_masked_detail(populated_vault):
 
 async def test_unlock_screen_shown_when_locked(vault):
     v, _ = vault
-    app = KeypApp(vault=v)  # no key provided, no session cache
+    app = TupacsApp(vault=v)  # no key provided, no session cache
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         assert app.screen.__class__.__name__ == "UnlockScreen"
@@ -49,7 +49,7 @@ async def test_unlock_screen_shown_when_locked(vault):
 
 async def test_search_filters_tree(populated_vault):
     v, key = populated_vault
-    app = KeypApp(vault=v, key=key)
+    app = TupacsApp(vault=v, key=key)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         app.refresh_tree("bank")
