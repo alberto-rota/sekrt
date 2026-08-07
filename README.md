@@ -1,5 +1,10 @@
 # 🔐 tupacs
 
+[![PyPI](https://img.shields.io/pypi/v/tupacs.svg)](https://pypi.org/project/tupacs/)
+[![CI](https://github.com/alberto-rota/tupacs/actions/workflows/ci.yml/badge.svg)](https://github.com/alberto-rota/tupacs/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/pypi/pyversions/tupacs.svg)](https://pypi.org/project/tupacs/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 > **TU**i **PA**ssword & **C**redential **S**torage.
 > All eyez on your secrets — but only you can read them.
 
@@ -18,6 +23,21 @@ private git remote (GitHub, GitLab, self-hosted — anything).
 - 🖥️ **TUI + CLI** — a full keyboard-driven interface *and* script-friendly commands
 - 🪶 **Lightweight** — three dependencies (`textual`, `click`, `cryptography`), no daemon, no sudo, no gpg setup
 
+## Contents
+
+- [Install](#install)
+- [Quickstart](#quickstart)
+- [Syncing with a git remote](#syncing-with-a-git-remote)
+- [The `.env` workflow](#the-env-workflow)
+- [SSH keys](#ssh-keys)
+- [The TUI](#the-tui)
+- [CLI reference](#cli-reference)
+- [Security model](#security-model)
+- [Vault location & configuration](#vault-location--configuration)
+- [Why not just `pass`?](#why-not-just-pass)
+- [Development](#development)
+- [Roadmap](#roadmap)
+
 ## Install
 
 ```bash
@@ -26,19 +46,67 @@ uv tool install tupacs      # recommended
 # or: pip install --user tupacs
 ```
 
+Requires Python 3.11+. Nothing else to set up — no daemon, no GPG keyring,
+no sudo.
+
 ## Quickstart
 
 ```bash
-tupacs init --remote git@github.com:you/secrets.git   # create vault + connect a PRIVATE repo
-tupacs add work/github -u alberto -g                  # generate & store a password
-tupacs get work/github -c                             # copy it (clipboard clears in 45s)
-tupacs                                                # open the TUI
-tupacs sync                                           # pull + push the encrypted vault
+tupacs init                             # create a vault at ~/.local/share/tupacs
+tupacs add work/github -u alberto -g    # generate & store a password
+tupacs get work/github -c               # copy it (clipboard clears in 45s)
+tupacs                                  # open the TUI
 ```
 
-Run `tupacs unlock` once and commands stop prompting for your passphrase for
-an hour (cached in a RAM-backed, user-private runtime dir — like gpg-agent,
-without the agent).
+That's a working local vault. `init` prompts you to choose (and confirm) a
+passphrase — that passphrase *is* the vault; there's no recovery if you
+lose it, so pick something you'll remember, and see the
+[security model](#security-model) below before you rely on it for real.
+
+Anything that touches a secret's contents (`get`, `show`, `edit`, `add`,
+`mv`, `env`, `ssh`, …) decrypts the vault key on demand, so by default
+you'll be prompted for the passphrase each time — `ls`, `find`, `rm` and
+`status` don't need to decrypt anything, so they never prompt. Run
+`tupacs unlock` once and the rest stop prompting for an hour (`-t MIN` to
+change that), courtesy of a RAM-backed, user-private session cache — like
+`gpg-agent`, without the agent. `tupacs lock` forgets it immediately.
+
+```bash
+tupacs unlock              # cache the key for 60 min
+tupacs get work/github -c  # no prompt this time
+tupacs lock                # forget it now
+```
+
+## Syncing with a git remote
+
+The vault is a plain git repository. `tupacs sync` is `git pull --rebase`
+then `git push` against `origin` — so you need an empty **private** repo to
+point it at (GitHub, GitLab, Gitea, a bare repo over SSH — anything git can
+push to).
+
+```bash
+# 1. create an empty private repo, e.g. `gh repo create secrets --private --clone=false`
+tupacs remote git@github.com:you/secrets.git   # or: tupacs init --remote <url> on a fresh vault
+tupacs sync                                    # first push
+```
+
+On another machine, point `$TUPACS_VAULT` at a fresh directory (or just run
+`tupacs init`, then `tupacs remote <url>` — `sync` will pull the rest):
+
+```bash
+tupacs remote git@github.com:you/secrets.git
+tupacs sync
+```
+
+Every `add`/`edit`/`mv`/`rm` auto-commits locally; `tupacs sync` is what
+actually talks to the remote. Want every change pushed immediately instead?
+
+```bash
+tupacs autosync on
+```
+
+Remember: the remote only ever sees ciphertext and entry *names* — see
+[what the remote sees](#security-model) below.
 
 ## The `.env` workflow
 
@@ -46,7 +114,7 @@ without the agent).
 with a scavenger hunt. tupacs ends it:
 
 ```bash
-cd ~/code/my-saas        # any git repo
+cd ~/code/my-saas       # any git repo
 tupacs env push         # encrypts .env into the vault, keyed by the repo's origin URL
 tupacs sync
 ```
@@ -60,7 +128,8 @@ tupacs env pull         # .env is back, byte for byte (0600 perms)
 
 It works with multiple env files per repo (`tupacs env push apps/api/.env.production`),
 detects unchanged/modified files, never overwrites local edits without
-`--force`, and `tupacs env ls` shows everything you've stored.
+`--force`, and `tupacs env ls` shows everything you've stored (repos without
+a git remote fall back to a `local/<dirname>` key).
 
 ## SSH keys
 
@@ -73,19 +142,25 @@ tupacs ssh restore deploy --dir ~/.ssh           # on a new machine: 0600/0644, 
 
 ## The TUI
 
-`tupacs` with no arguments opens the interface: a folder tree of your vault,
-fuzzy filtering, masked detail view, add/edit forms with a password generator,
-and one-key sync.
+`tupacs` with no arguments (or `tupacs tui`) opens the interface: a folder
+tree of your vault, fuzzy filtering, a masked detail view, add/edit forms
+with a built-in password generator, and one-key sync.
 
-| Key | Action                              |
-| --- | ----------------------------------- |
-| `/` | filter entries                      |
-| `c` | copy secret (auto-clears in 45s)    |
-| `r` | reveal / mask fields                |
-| `a` / `e` / `d` | add / edit / delete     |
-| `s` | sync with the git remote            |
-| `l` | lock the vault                      |
-| `q` | quit                                |
+![tupacs TUI walkthrough](docs/tui.gif)
+
+| Key | Action |
+| --- | --- |
+| `/` | filter entries |
+| `c` | copy the entry's secret (auto-clears in 45s) |
+| `u` | copy the entry's username |
+| `r` | reveal / mask fields |
+| `a` / `e` / `d` | add / edit / delete |
+| `s` | sync with the git remote |
+| `l` | lock the vault (prompts for the passphrase again) |
+| `q` | quit |
+
+`.env` and SSH entries show up in the tree read-only — add, restore and
+inspect those from the CLI (`tupacs env`, `tupacs ssh`) instead.
 
 ## CLI reference
 
@@ -109,7 +184,13 @@ tupacs git <args...>            raw git inside the vault
 tupacs unlock [-t MIN] / lock   cache / forget the vault key
 tupacs passwd                   change passphrase (re-encrypts everything)
 tupacs status                   vault, remote, session info
+tupacs tui                      open the interactive TUI
 ```
+
+Every command has `--help` (e.g. `tupacs add --help`) with the full option
+list and examples.
+
+![tupacs CLI walkthrough](docs/quickstart.gif)
 
 ## Security model
 
@@ -167,14 +248,29 @@ workflows.
 ## Development
 
 ```bash
-git clone https://github.com/albertorota/tupacs && cd tupacs
+git clone https://github.com/alberto-rota/tupacs && cd tupacs
 uv sync                 # installs everything incl. dev deps
 uv run pytest           # tests
 uv run ruff check .     # lint
 uv run tupacs --help
 ```
 
+Try changes against a throwaway vault so you never touch your real one:
+
+```bash
+export TUPACS_VAULT=/tmp/tupacs-dev TUPACS_PASSPHRASE=dev
+uv run tupacs init && uv run tupacs
+```
+
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+The `docs/*.gif` demos are recorded with [VHS](https://github.com/charmbracelet/vhs)
+from the tapes in `docs/vhs/`:
+
+```bash
+vhs docs/vhs/quickstart.tape   # -> docs/quickstart.gif
+vhs docs/vhs/tui.tape          # -> docs/tui.gif (run quickstart.tape first to seed the demo vault)
+```
 
 ## Roadmap
 

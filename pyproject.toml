@@ -41,10 +41,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/albertorota/tupacs"
-Repository = "https://github.com/albertorota/tupacs"
-Issues = "https://github.com/albertorota/tupacs/issues"
-Changelog = "https://github.com/albertorota/tupacs/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/alberto-rota/tupacs"
+Repository = "https://github.com/alberto-rota/tupacs"
+Issues = "https://github.com/alberto-rota/tupacs/issues"
+Changelog = "https://github.com/alberto-rota/tupacs/blob/main/CHANGELOG.md"
 
 [project.scripts]
 tupacs = "tupacs.cli:main"

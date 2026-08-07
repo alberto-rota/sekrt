@@ -5,7 +5,7 @@ Thanks for helping out! 🔐
 ## Setup
 
 ```bash
-git clone https://github.com/albertorota/tupacs && cd tupacs
+git clone https://github.com/alberto-rota/tupacs && cd tupacs
 uv sync            # creates .venv with all dev dependencies
 uv run pytest      # run the test suite
 uv run ruff check .
