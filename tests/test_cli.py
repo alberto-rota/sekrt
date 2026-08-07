@@ -47,6 +47,27 @@ def test_add_get_show_roundtrip(runner, vault_dir):
     assert "s3cret!" in result.output
 
 
+def test_show_masks_note_by_default(runner, vault_dir):
+    invoke(runner, "init")
+    invoke(runner, "add", "wifi/office", "-t", "note", "--notes", "WPA2 s3cr3t-phrase")
+
+    result = invoke(runner, "show", "wifi/office")
+    assert "s3cr3t-phrase" not in result.output
+
+    result = invoke(runner, "show", "wifi/office", "--reveal")
+    assert "s3cr3t-phrase" in result.output
+
+
+def test_show_strips_terminal_control_chars(runner, vault_dir):
+    invoke(runner, "init")
+    invoke(runner, "add", "evil", "-t", "note", "--notes", "safe\x1b[2J\x07text")
+
+    result = invoke(runner, "show", "evil", "--reveal")
+    assert "\x1b" not in result.output
+    assert "\x07" not in result.output
+    assert "safe[2Jtext" in result.output
+
+
 def test_add_generate(runner, vault_dir):
     invoke(runner, "init")
     result = invoke(runner, "add", "gen/entry", "-g", "--show", "-L", "24")

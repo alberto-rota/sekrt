@@ -49,6 +49,24 @@ def test_garbage_blob_fails():
         crypto.decrypt(b"k" * 32, b"not an entry")
 
 
+def test_from_dict_rejects_hostile_params():
+    """KDF params come from a plaintext, git-synced config — never trust them."""
+    good = KdfParams.generate().to_dict()
+    for tampered in (
+        {**good, "n": 4},  # too weak
+        {**good, "n": 2**14 + 1},  # not a power of two
+        {**good, "n": 2**40},  # absurd memory demand
+        {**good, "r": 0},
+        {**good, "r": 2**20},
+        {**good, "p": 0},
+        {**good, "p": 1000},
+        {**good, "n": "lots"},
+        {k: v for k, v in good.items() if k != "salt"},
+    ):
+        with pytest.raises(crypto.CryptoError):
+            KdfParams.from_dict(tampered)
+
+
 def test_keycheck():
     key = b"k" * 32
     check = crypto.make_keycheck(key)

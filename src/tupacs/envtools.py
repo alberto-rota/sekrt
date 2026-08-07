@@ -19,6 +19,7 @@ from tupacs.vault import (
     EntryNotFoundError,
     Vault,
     VaultError,
+    _atomic_write,
     new_entry,
     sanitize_segment,
 )
@@ -176,9 +177,7 @@ def pull(
             if not force:
                 results.append((relpath, "skipped"))
                 continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content)
-        target.chmod(0o600)
+        _atomic_write(target, content.encode())  # 0600 from creation, never world-readable
         results.append((relpath, "restored"))
     return results
 

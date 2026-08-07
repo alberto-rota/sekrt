@@ -15,7 +15,7 @@ from tupacs.crypto import CryptoError, WrongPassphraseError
 from tupacs.generate import generate_password
 from tupacs.vault import Vault, VaultError, new_entry, primary_field
 
-SENSITIVE_FIELDS = {"password", "key", "secret", "token", "private", "content"}
+SENSITIVE_FIELDS = {"password", "key", "secret", "token", "private", "content", "notes"}
 MASK = "••••••••••"
 EDITABLE_TYPES = ("password", "api_key", "note")
 

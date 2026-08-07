@@ -9,15 +9,20 @@ gpg-agent for `pass`. Preference order for the cache location:
 3. the platform temp dir (private per-user on macOS)
 
 Files are created ``0600`` inside a ``0700`` directory and expire after a TTL.
-No sudo, no daemon.
+A detached helper process deletes the file once the TTL passes (expiry is
+also enforced on read, so the helper is belt-and-braces). No sudo, no daemon.
 """
 
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
+import stat
+import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -40,6 +45,13 @@ def private_tmpdir() -> Path | None:
         d = base / f"tupacs-{uid}"
         try:
             d.mkdir(mode=0o700, exist_ok=True)
+            # In a world-writable base (/tmp) the path may have been planted
+            # by another user: accept only a real directory we own.
+            st = os.lstat(d)
+            if not stat.S_ISDIR(st.st_mode):
+                continue
+            if isinstance(uid, int) and st.st_uid != uid:
+                continue
             os.chmod(d, 0o700)
         except OSError:
             continue
@@ -63,6 +75,31 @@ def _session_file(vault_path: Path) -> Path | None:
     return d / f"{tag}.session"
 
 
+_REAPER_SRC = """
+import json, os, sys, time
+path, delay = sys.argv[1], float(sys.argv[2])
+time.sleep(delay)
+try:
+    with open(path) as f:
+        expires = int(json.load(f)["expires"])
+    if expires <= time.time():  # a later `unlock` may have extended the TTL
+        os.unlink(path)
+except Exception:
+    pass
+"""
+
+
+def _spawn_reaper(f: Path, ttl: int) -> None:
+    """Best-effort detached deleter, so an expired key never lingers on disk."""
+    with contextlib.suppress(OSError):  # expiry is still enforced on read
+        subprocess.Popen(
+            [sys.executable, "-c", _REAPER_SRC, str(f), str(max(ttl, 0) + 1)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+
 def store_key(vault_path: Path, key: bytes, ttl: int = DEFAULT_TTL) -> bool:
     """Cache *key* for *ttl* seconds. Returns False if no usable location."""
     f = _session_file(vault_path)
@@ -76,6 +113,7 @@ def store_key(vault_path: Path, key: bytes, ttl: int = DEFAULT_TTL) -> bool:
         os.write(fd, payload)
     finally:
         os.close(fd)
+    _spawn_reaper(f, ttl)
     return True
 
 

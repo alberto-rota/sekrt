@@ -37,6 +37,17 @@ def test_restore_refuses_overwrite(vault, tmp_path):
     sshtools.restore(v, key, "k", directory=dest, force=True)
 
 
+def test_restore_rejects_path_traversal(vault, tmp_path):
+    v, key = vault
+    private, public = sshtools.generate_ed25519("x")
+    sshtools.store(v, key, "k", private=private, public=public)
+    dest = tmp_path / "sshdir"
+    for bad in ("../escape", "/etc/cron.d/x", "a/b", ".."):
+        with pytest.raises(sshtools.SshError):
+            sshtools.restore(v, key, "k", directory=dest, filename=bad)
+    assert not (tmp_path / "escape").exists()
+
+
 def test_load_keypair(vault, tmp_path):
     private, public = sshtools.generate_ed25519("orig@host")
     key_file = tmp_path / "id_ed25519"

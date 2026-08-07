@@ -28,6 +28,11 @@ DEFAULT_SCRYPT_N = 2**15  # ~32 MiB, <100ms on a modern laptop
 DEFAULT_SCRYPT_R = 8
 DEFAULT_SCRYPT_P = 1
 
+MIN_SCRYPT_N = 2**10
+MAX_SCRYPT_R = 64
+MAX_SCRYPT_P = 16
+MAX_SCRYPT_MEMORY = 2**31  # scrypt needs 128*n*r bytes; cap at 2 GiB
+
 
 class CryptoError(Exception):
     """Base class for cryptographic failures."""
@@ -39,6 +44,23 @@ class DecryptionError(CryptoError):
 
 class WrongPassphraseError(CryptoError):
     """The supplied passphrase does not unlock this vault."""
+
+
+def validate_scrypt_params(n: int, r: int, p: int) -> None:
+    """Reject scrypt parameters that are too weak or absurdly expensive.
+
+    The vault config is plaintext and git-synced, so KDF parameters read from
+    it are untrusted: a tampered config must not be able to weaken key
+    derivation or force a multi-GiB allocation on unlock.
+    """
+    if n < MIN_SCRYPT_N or n & (n - 1):
+        raise CryptoError(f"scrypt n must be a power of two >= {MIN_SCRYPT_N}")
+    if not 1 <= r <= MAX_SCRYPT_R:
+        raise CryptoError(f"scrypt r must be in 1..{MAX_SCRYPT_R}")
+    if not 1 <= p <= MAX_SCRYPT_P:
+        raise CryptoError(f"scrypt p must be in 1..{MAX_SCRYPT_P}")
+    if 128 * n * r > MAX_SCRYPT_MEMORY:
+        raise CryptoError("scrypt parameters require an implausible amount of memory")
 
 
 @dataclass(frozen=True)
@@ -53,8 +75,7 @@ class KdfParams:
     @classmethod
     def generate(cls) -> KdfParams:
         n = int(os.environ.get("TUPACS_SCRYPT_N", DEFAULT_SCRYPT_N))
-        if n < 2**10 or n & (n - 1):
-            raise CryptoError("TUPACS_SCRYPT_N must be a power of two >= 1024")
+        validate_scrypt_params(n, DEFAULT_SCRYPT_R, DEFAULT_SCRYPT_P)
         return cls(salt=os.urandom(16), n=n)
 
     def to_dict(self) -> dict:
@@ -70,7 +91,13 @@ class KdfParams:
     def from_dict(cls, d: dict) -> KdfParams:
         if d.get("algo") != "scrypt":
             raise CryptoError(f"unsupported KDF {d.get('algo')!r}")
-        return cls(salt=base64.b64decode(d["salt"]), n=d["n"], r=d["r"], p=d["p"])
+        try:
+            salt = base64.b64decode(d["salt"])
+            n, r, p = int(d["n"]), int(d["r"]), int(d["p"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CryptoError(f"malformed KDF parameters: {exc}") from exc
+        validate_scrypt_params(n, r, p)
+        return cls(salt=salt, n=n, r=r, p=p)
 
 
 def derive_key(passphrase: str, params: KdfParams) -> bytes:

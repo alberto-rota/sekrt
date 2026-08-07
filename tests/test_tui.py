@@ -39,6 +39,21 @@ async def test_select_shows_masked_detail(populated_vault):
         assert "s3cret" in app.detail_markup or "pin" in app.detail_markup
 
 
+async def test_note_field_masked_by_default(vault):
+    v, key = vault
+    v.write(key, "wifi/office", new_entry("note", {"notes": "WPA2 s3cr3t-phrase"}))
+    app = TupacsApp(vault=v, key=key)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        leaf = app.query_one("#tree").root.children[0].children[0]
+        app.query_one("#tree").select_node(leaf)
+        await pilot.pause()
+        assert "s3cr3t-phrase" not in app.detail_markup
+
+        await pilot.press("r")
+        assert "s3cr3t-phrase" in app.detail_markup
+
+
 async def test_unlock_screen_shown_when_locked(vault):
     v, _ = vault
     app = TupacsApp(vault=v)  # no key provided, no session cache

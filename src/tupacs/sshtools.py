@@ -95,6 +95,8 @@ def restore(
     entry = vault.read(key, full_name(name))
     data = entry["data"]
     fname = filename or data.get("filename") or name.split("/")[-1]
+    if not fname or fname != Path(fname).name or fname in (".", ".."):
+        raise SshError(f"invalid key file name {fname!r} — must be a bare file name")
 
     directory = directory.expanduser()
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)

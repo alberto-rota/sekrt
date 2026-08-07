@@ -33,6 +33,10 @@ CONFIG_NAME = ".tupacs.json"
 ENTRY_SUFFIX = ".tup"
 ENTRY_VERSION = 1
 
+# The passphrase is the vault's entire security: anyone holding the vault
+# files (e.g. the git remote) can brute-force it offline.
+MIN_PASSPHRASE_LEN = 8
+
 TYPES = ("password", "api_key", "note", "env", "ssh")
 PRIMARY_FIELD = {
     "password": "password",
@@ -146,8 +150,7 @@ class Vault:
         """Initialise a new vault and return the derived key."""
         if self.initialized:
             raise VaultError(f"vault already exists at {self.path}")
-        if not passphrase:
-            raise VaultError("passphrase must not be empty")
+        _check_passphrase(passphrase)
         self.path.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(self.path, 0o700)
 
@@ -274,8 +277,7 @@ class Vault:
         Entries are decrypted up-front so a wrong key fails before anything
         is written; the auto-commits mean git history can restore any state.
         """
-        if not new_passphrase:
-            raise VaultError("passphrase must not be empty")
+        _check_passphrase(new_passphrase)
         entries = {name: self.read(old_key, name) for name in self.list_entries()}
 
         params = KdfParams.generate()
@@ -295,6 +297,14 @@ class Vault:
     def _commit(self, message: str) -> None:
         if gitsync.commit_all(self.path, message) and self.auto_sync:
             gitsync.push(self.path)  # best-effort; `tupacs sync` reports errors
+
+
+def _check_passphrase(passphrase: str) -> None:
+    if len(passphrase) < MIN_PASSPHRASE_LEN:
+        raise VaultError(
+            f"passphrase must be at least {MIN_PASSPHRASE_LEN} characters — "
+            "it is the only thing protecting the vault"
+        )
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
