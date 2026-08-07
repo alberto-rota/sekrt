@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from keyp import session
+from tupacs import session
 
 
 class EditorError(Exception):
@@ -28,7 +28,7 @@ def edit_text(initial: str, *, suffix: str = ".json") -> str | None:
         raise EditorError("no editor found — set $EDITOR")
 
     directory = session.private_tmpdir() or Path(tempfile.gettempdir())
-    fd, path = tempfile.mkstemp(dir=directory, suffix=suffix, prefix="keyp-")
+    fd, path = tempfile.mkstemp(dir=directory, suffix=suffix, prefix="tupacs-")
     try:
         os.write(fd, initial.encode())
         os.close(fd)

@@ -1,13 +1,13 @@
-"""The keyp vault: a directory of individually-encrypted entries.
+"""The tupacs vault: a directory of individually-encrypted entries.
 
 Layout (mirrors `pass`, one file per secret, so git diffs stay small)::
 
-    ~/.local/share/keyp/
-        .keyp.json          # vault config: KDF params, keycheck, options
+    ~/.local/share/tupacs/
+        .tupacs.json          # vault config: KDF params, keycheck, options
         .gitattributes
-        work/github.kyp        # entry "work/github"
-        env/github.com/you/proj/.env.kyp
-        ssh/deploy-key.kyp
+        work/github.tup        # entry "work/github"
+        env/github.com/you/proj/.env.tup
+        ssh/deploy-key.tup
 
 Entry names and folder structure are visible metadata (like `pass`);
 contents are AES-256-GCM encrypted with the entry name as associated data.
@@ -26,11 +26,11 @@ import tempfile
 import time
 from pathlib import Path
 
-from keyp import crypto, gitsync
-from keyp.crypto import KdfParams, WrongPassphraseError
+from tupacs import crypto, gitsync
+from tupacs.crypto import KdfParams, WrongPassphraseError
 
-CONFIG_NAME = ".keyp.json"
-ENTRY_SUFFIX = ".kyp"
+CONFIG_NAME = ".tupacs.json"
+ENTRY_SUFFIX = ".tup"
 ENTRY_VERSION = 1
 
 TYPES = ("password", "api_key", "note", "env", "ssh")
@@ -66,10 +66,10 @@ class InvalidNameError(VaultError):
 
 
 def default_vault_dir() -> Path:
-    if env := os.environ.get("KEYP_VAULT"):
+    if env := os.environ.get("TUPACS_VAULT"):
         return Path(env).expanduser()
     data_home = os.environ.get("XDG_DATA_HOME") or "~/.local/share"
-    return Path(data_home).expanduser() / "keyp"
+    return Path(data_home).expanduser() / "tupacs"
 
 
 def validate_name(name: str) -> str:
@@ -132,7 +132,7 @@ class Vault:
     def _config(self) -> dict:
         if not self.initialized:
             raise VaultNotInitializedError(
-                f"no vault at {self.path} — run `keyp init` first"
+                f"no vault at {self.path} — run `tupacs init` first"
             )
         try:
             return json.loads(self.config_path.read_text())
@@ -161,7 +161,7 @@ class Vault:
         }
         self._save_config(config)
         gitsync.ensure_repo(self.path)
-        gitsync.commit_all(self.path, "keyp: initialize vault")
+        gitsync.commit_all(self.path, "tupacs: initialize vault")
         return key
 
     def unlock(self, passphrase: str) -> bytes:
@@ -188,7 +188,7 @@ class Vault:
         config = self._config()
         config["auto_sync"] = enabled
         self._save_config(config)
-        self._commit(f"keyp: auto-sync {'on' if enabled else 'off'}")
+        self._commit(f"tupacs: auto-sync {'on' if enabled else 'off'}")
 
     # -- entries -------------------------------------------------------------
 
@@ -205,7 +205,7 @@ class Vault:
     def list_entries(self, prefix: str = "") -> list[str]:
         if not self.initialized:
             raise VaultNotInitializedError(
-                f"no vault at {self.path} — run `keyp init` first"
+                f"no vault at {self.path} — run `tupacs init` first"
             )
         names = []
         for file in self.path.rglob(f"*{ENTRY_SUFFIX}"):
@@ -287,20 +287,20 @@ class Vault:
         for name, entry in entries.items():
             blob = crypto.encrypt(new_key, json.dumps(entry).encode(), aad=name.encode())
             _atomic_write(self.path / (name + ENTRY_SUFFIX), blob)
-        self._commit("keyp: rekey vault")
+        self._commit("tupacs: rekey vault")
         return new_key
 
     # -- git -----------------------------------------------------------------
 
     def _commit(self, message: str) -> None:
         if gitsync.commit_all(self.path, message) and self.auto_sync:
-            gitsync.push(self.path)  # best-effort; `keyp sync` reports errors
+            gitsync.push(self.path)  # best-effort; `tupacs sync` reports errors
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
     """Write with 0600 permissions, atomically (write temp file + rename)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".kyp-tmp-")
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tup-tmp-")
     try:
         try:
             os.write(fd, data)
