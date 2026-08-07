@@ -1,0 +1,75 @@
+[project]
+name = "tupacss"
+version = "0.1.0"
+description = "A TUI + CLI secret manager for developers: passwords, API keys, SSH keys and .env files — encrypted locally, synced with git."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Alberto Rota", email = "alberto1.rota@polimi.it" }]
+requires-python = ">=3.11"
+keywords = [
+    "password-manager",
+    "secrets",
+    "tui",
+    "cli",
+    "dotenv",
+    "ssh-keys",
+    "git",
+    "textual",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: Console :: Curses",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Security",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "click>=8.1",
+    "cryptography>=42.0",
+    "textual>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/albertorota/tupacss"
+Repository = "https://github.com/albertorota/tupacss"
+Issues = "https://github.com/albertorota/tupacss/issues"
+Changelog = "https://github.com/albertorota/tupacss/blob/main/CHANGELOG.md"
+
+[project.scripts]
+tupacss = "tupacss.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tupacss"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
