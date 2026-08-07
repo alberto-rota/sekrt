@@ -1,11 +1,11 @@
-# Contributing to tupacss
+# Contributing to keyp
 
 Thanks for helping out! 🔐
 
 ## Setup
 
 ```bash
-git clone https://github.com/albertorota/tupacss && cd tupacss
+git clone https://github.com/albertorota/keyp && cd keyp
 uv sync            # creates .venv with all dev dependencies
 uv run pytest      # run the test suite
 uv run ruff check .
@@ -14,8 +14,8 @@ uv run ruff check .
 Try your changes against a throwaway vault so you never touch your real one:
 
 ```bash
-export TUPACSS_VAULT=/tmp/tupacss-dev TUPACSS_PASSPHRASE=dev
-uv run tupacss init && uv run tupacss
+export KEYP_VAULT=/tmp/keyp-dev KEYP_PASSPHRASE=dev
+uv run keyp init && uv run keyp
 ```
 
 ## Guidelines
@@ -32,7 +32,7 @@ uv run tupacss init && uv run tupacss
 
 ## Releasing (maintainers)
 
-1. Bump `version` in `pyproject.toml` and `src/tupacss/__init__.py`.
+1. Bump `version` in `pyproject.toml` and `src/keyp/__init__.py`.
 2. Update `CHANGELOG.md`.
 3. Tag: `git tag v0.x.y && git push --tags`.
 4. Create a GitHub release — the `publish.yml` workflow uploads to PyPI via

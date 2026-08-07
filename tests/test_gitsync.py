@@ -1,7 +1,7 @@
 import subprocess
 
-from tupacss import gitsync
-from tupacss.vault import new_entry
+from keyp import gitsync
+from keyp.vault import new_entry
 
 from .conftest import requires_git
 
@@ -44,8 +44,8 @@ def test_sync_with_bare_remote(vault, tmp_path):
         ["git", "-C", str(bare), "ls-tree", "-r", "--name-only", "main"],
         capture_output=True, text=True, check=True,
     ).stdout
-    assert "synced/entry.tps" in files
-    assert ".tupacss.json" in files
+    assert "synced/entry.kyp" in files
+    assert ".keyp.json" in files
 
     # second sync is a no-op but still succeeds
     ok, _ = gitsync.sync(v.path)
@@ -66,4 +66,4 @@ def test_autosync_pushes(vault, tmp_path):
         ["git", "-C", str(bare), "ls-tree", "-r", "--name-only", "main"],
         capture_output=True, text=True, check=True,
     ).stdout
-    assert "auto/pushed.tps" in files
+    assert "auto/pushed.kyp" in files

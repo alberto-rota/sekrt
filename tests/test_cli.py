@@ -1,7 +1,7 @@
 import subprocess
 
-from tupacss.cli import main
-from tupacss.generate import generate_password
+from keyp.cli import main
+from keyp.generate import generate_password
 
 from .conftest import PASSPHRASE, make_git_repo, requires_git
 
@@ -106,7 +106,7 @@ def test_unlock_lock_cycle(runner, vault_dir, monkeypatch):
     assert result.exit_code == 0
 
     # cached key works even without the passphrase env var
-    monkeypatch.delenv("TUPACSS_PASSPHRASE")
+    monkeypatch.delenv("KEYP_PASSPHRASE")
     invoke(runner, "add", "cached/entry", "-g")
     assert invoke(runner, "get", "cached/entry").exit_code == 0
 
@@ -119,19 +119,19 @@ def test_passwd(runner, vault_dir, monkeypatch):
     invoke(runner, "add", "keep", "-g")
     old_secret = invoke(runner, "get", "keep").output.strip()
 
-    monkeypatch.delenv("TUPACSS_PASSPHRASE")
+    monkeypatch.delenv("KEYP_PASSPHRASE")
     result = invoke(
         runner, "passwd", input=f"{PASSPHRASE}\nnew phrase\nnew phrase\n"
     )
     assert result.exit_code == 0
 
-    monkeypatch.setenv("TUPACSS_PASSPHRASE", "new phrase")
+    monkeypatch.setenv("KEYP_PASSPHRASE", "new phrase")
     assert invoke(runner, "get", "keep").output.strip() == old_secret
 
 
 def test_wrong_passphrase_env(runner, vault_dir, monkeypatch):
     invoke(runner, "init")
-    monkeypatch.setenv("TUPACSS_PASSPHRASE", "wrong")
+    monkeypatch.setenv("KEYP_PASSPHRASE", "wrong")
     result = runner.invoke(main, ["add", "x", "-g"])
     assert result.exit_code != 0
     assert "wrong passphrase" in result.output
@@ -188,7 +188,7 @@ def test_ssh_workflow(runner, vault_dir, tmp_path):
 
 
 def test_no_vault_errors_cleanly(runner, tmp_path, monkeypatch):
-    monkeypatch.setenv("TUPACSS_VAULT", str(tmp_path / "missing"))
+    monkeypatch.setenv("KEYP_VAULT", str(tmp_path / "missing"))
     result = runner.invoke(main, ["ls"])
     assert result.exit_code != 0
-    assert "tupacss init" in result.output
+    assert "keyp init" in result.output

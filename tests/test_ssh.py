@@ -1,6 +1,6 @@
 import pytest
 
-from tupacss import sshtools
+from keyp import sshtools
 
 
 def test_generate_ed25519():

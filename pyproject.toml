@@ -1,5 +1,5 @@
 [project]
-name = "tupacss"
+name = "keyp"
 version = "0.1.0"
 description = "A TUI + CLI secret manager for developers: passwords, API keys, SSH keys and .env files — encrypted locally, synced with git."
 readme = "README.md"
@@ -41,13 +41,13 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/albertorota/tupacss"
-Repository = "https://github.com/albertorota/tupacss"
-Issues = "https://github.com/albertorota/tupacss/issues"
-Changelog = "https://github.com/albertorota/tupacss/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/albertorota/keyp"
+Repository = "https://github.com/albertorota/keyp"
+Issues = "https://github.com/albertorota/keyp/issues"
+Changelog = "https://github.com/albertorota/keyp/blob/main/CHANGELOG.md"
 
 [project.scripts]
-tupacss = "tupacss.cli:main"
+keyp = "keyp.cli:main"
 
 [dependency-groups]
 dev = [
@@ -61,7 +61,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/tupacss"]
+packages = ["src/keyp"]
 
 [tool.ruff]
 line-length = 100
