@@ -4,9 +4,9 @@
 They end up pasted into Slack, stashed in a note, or lost — and every fresh
 clone starts with a scavenger hunt for the values that make the app boot.
 
-tupacs stores them the way it stores any other secret: one AES-256-GCM
+sekrt stores them the way it stores any other secret: one AES-256-GCM
 encrypted entry per file, keyed by the repository the file belongs to, so
-`tupacs env pull` in a fresh clone puts it back byte for byte.
+`sekrt env pull` in a fresh clone puts it back byte for byte.
 
 - [The round trip](#the-round-trip)
 - [How repositories are identified](#how-repositories-are-identified)
@@ -24,12 +24,12 @@ Two commands, and the second one runs months later on a different machine:
 
 ```bash
 cd ~/code/my-saas
-tupacs env push          # encrypt .env into the vault, keyed by this repo
+sekrt env push          # encrypt .env into the vault, keyed by this repo
 ```
 
 ```bash
 git clone git@github.com:you/my-saas.git && cd my-saas
-tupacs env pull          # .env is back, 0600, byte for byte
+sekrt env pull          # .env is back, 0600, byte for byte
 ```
 
 ![The .env round trip](env.gif)
@@ -76,15 +76,15 @@ repo — the position relative to the repo root is part of the key, so a monorep
 with one env file per service round-trips as a set.
 
 ```bash
-tupacs env push .env apps/*/.env.* infra/.env.staging
+sekrt env push .env apps/*/.env.* infra/.env.staging
 ```
 
 ![Several env files in one repo](env-multi.gif)
 
 Each file is a separate encrypted entry, and each push is a commit in the
-vault's git history — `tupacs sync` is what sends them to your remote.
+vault's git history — `sekrt sync` is what sends them to your remote.
 
-A bare `tupacs env pull` restores **every** file stored for the current repo,
+A bare `sekrt env pull` restores **every** file stored for the current repo,
 so on a fresh clone of the monorepo above, one command repopulates all four.
 
 ## What it will and won't overwrite
@@ -92,7 +92,7 @@ so on a fresh clone of the monorepo above, one command repopulates all four.
 Both directions compare content first and tell you what actually happened, so
 running either twice is safe and quiet.
 
-`tupacs env push`:
+`sekrt env push`:
 
 | | meaning |
 | --- | --- |
@@ -100,7 +100,7 @@ running either twice is safe and quiet.
 | `~ … (updated)` | the file changed; the vault entry was rewritten |
 | `= … (unchanged)` | identical to what's stored — nothing written, no commit |
 
-`tupacs env pull`:
+`sekrt env pull`:
 
 | | meaning |
 | --- | --- |
@@ -114,21 +114,21 @@ That last one is the important one: `pull` never silently overwrites local
 edits. Pass `--force` when you genuinely want the stored version to win:
 
 ```bash
-tupacs env pull --force
+sekrt env pull --force
 ```
 
 There's no reverse guard on `push` — it treats your working copy as the truth
 and overwrites the stored entry. The old content stays in the vault's git
-history, so `tupacs git log -p` can recover it.
+history, so `sekrt git log -p` can recover it.
 
 ## Reading, listing and removing
 
 ```bash
-tupacs env ls                              # every stored env file; '*' marks this repo's
-tupacs env show                            # print this repo's stored .env
-tupacs env show apps/api/.env.production   # or a specific one
-tupacs env rm                              # forget this repo's stored .env (asks first)
-tupacs env rm apps/api/.env.production -f  # a specific one, no prompt
+sekrt env ls                              # every stored env file; '*' marks this repo's
+sekrt env show                            # print this repo's stored .env
+sekrt env show apps/api/.env.production   # or a specific one
+sekrt env rm                              # forget this repo's stored .env (asks first)
+sekrt env rm apps/api/.env.production -f  # a specific one, no prompt
 ```
 
 `env show` prints the stored content without touching your working tree —
@@ -136,11 +136,11 @@ useful for checking what's in the vault before pulling over a file you've
 edited.
 
 Env entries are ordinary vault entries, so the generic commands see them too.
-`tupacs show` masks the content by default and gives you a fingerprint instead,
+`sekrt show` masks the content by default and gives you a fingerprint instead,
 which is the quickest way to compare two machines without printing secrets:
 
 ```console
-$ tupacs show env/github.com/you/my-saas/.env
+$ sekrt show env/github.com/you/my-saas/.env
 env/github.com/you/my-saas/.env
   type: env
   content: (5 lines — use --reveal)
@@ -158,15 +158,15 @@ The vault is a git repository; `env push` only writes locally. Syncing is the
 same as for any other entry:
 
 ```bash
-tupacs env push
-tupacs sync              # or: tupacs autosync on, once
+sekrt env push
+sekrt sync              # or: sekrt autosync on, once
 ```
 
 To pull a *different* repo's env files into the directory you're standing in —
 handy for a fork, a rename, or a worktree whose remote differs — name the key:
 
 ```bash
-tupacs env pull --repo github.com/you/my-saas
+sekrt env pull --repo github.com/you/my-saas
 ```
 
 The stored relative paths are written under the **current** repo's root, so
@@ -176,13 +176,13 @@ with `--repo <old-slug>`, then `push` to store them under the new one.
 ## Command reference
 
 ```text
-tupacs env push [FILES...]      encrypt env file(s) of the current repo   (default: .env)
-tupacs env pull [FILES...]      restore this repo's stored env file(s)    (default: all)
+sekrt env push [FILES...]      encrypt env file(s) of the current repo   (default: .env)
+sekrt env pull [FILES...]      restore this repo's stored env file(s)    (default: all)
     --repo SLUG                 pull another repo's files into this directory
     --force, -f                 overwrite local files that differ
-tupacs env ls                   list every stored env file; '*' = current repo
-tupacs env show [FILE]          print stored content                     (default: .env)
-tupacs env rm [FILE]            remove a stored env file                 (default: .env)
+sekrt env ls                   list every stored env file; '*' = current repo
+sekrt env show [FILE]          print stored content                     (default: .env)
+sekrt env rm [FILE]            remove a stored env file                 (default: .env)
     --force, -f                 skip the confirmation prompt
 ```
 
@@ -204,28 +204,28 @@ hosts your sync remote can read that structure. See the
 
 ## Troubleshooting
 
-**`no env files stored for 'local/my-project' — run tupacs env push in that repo first`**
+**`no env files stored for 'local/my-project' — run sekrt env push in that repo first`**
 The `local/` prefix means no `origin` remote was found. Either you're not in
 the repo you think you are, or the remote is named something other than
 `origin`. Check with `git remote -v`.
 
 **`no env files stored for 'github.com/you/proj'`, but you know you pushed it**
 The key is derived from `origin`, so it changed if the repo was renamed,
-transferred, or you cloned a fork. `tupacs env ls` lists every key you've
+transferred, or you cloned a fork. `sekrt env ls` lists every key you've
 stored; pull the right one with `--repo <slug>`.
 
 **`/etc/hosts is outside the repository …`**
 `push` only accepts files inside the current repo — the path relative to the
 repo root is what makes the entry restorable elsewhere. For secrets that
-aren't part of a repository, use a normal entry (`tupacs add`) instead.
+aren't part of a repository, use a normal entry (`sekrt add`) instead.
 
 **`env pull` says `skipped`**
 A local file exists and differs. Compare it against the stored copy with
-`tupacs env show`, then re-run with `--force` if the stored version should win.
+`sekrt env show`, then re-run with `--force` if the stored version should win.
 
 **Nothing prompts for a passphrase / everything prompts**
 `push`, `pull` and `show` decrypt, so they need the key; `ls` doesn't.
-`tupacs unlock` caches the key for an hour, `tupacs lock` forgets it.
+`sekrt unlock` caches the key for an hour, `sekrt lock` forgets it.
 
 ---
 
@@ -234,7 +234,7 @@ A local file exists and differs. Compare it against the stored copy with
 They're recorded with [VHS](https://github.com/charmbracelet/vhs) from the
 tapes in [`vhs/`](vhs/). The tapes record against a throwaway fixture — real
 git repos with real remotes, a fresh clone, and a scratch vault — built by
-[`vhs/setup-env-demo.sh`](vhs/setup-env-demo.sh) under `/tmp/tupacs-vhs-env`,
+[`vhs/setup-env-demo.sh`](vhs/setup-env-demo.sh) under `/tmp/sekrt-vhs-env`,
 which each tape rebuilds itself. Your own vault and `~/.gitconfig` are never
 touched.
 
@@ -244,4 +244,4 @@ vhs docs/vhs/env-multi.tape    # -> docs/env-multi.gif
 vhs docs/vhs/env-safety.tape   # -> docs/env-safety.gif
 ```
 
-Run them from the repo root with `tupacs` on `$PATH`.
+Run them from the repo root with `sekrt` on `$PATH`.

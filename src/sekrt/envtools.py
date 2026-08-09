@@ -1,9 +1,9 @@
 """Store and restore .env files, keyed by the repository they belong to.
 
-``tupacs env push`` run anywhere inside a git repo figures out the repo's
+``sekrt env push`` run anywhere inside a git repo figures out the repo's
 identity from its ``origin`` remote (``github.com/you/project``) and stores
 the file under ``env/<slug>/<relative-path>``. On any machine, in a fresh
-clone, ``tupacs env pull`` puts it back. Repos without a remote fall back
+clone, ``sekrt env pull`` puts it back. Repos without a remote fall back
 to ``local/<dirname>``.
 """
 
@@ -15,7 +15,7 @@ import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
 
-from tupacs.vault import (
+from sekrt.vault import (
     EntryNotFoundError,
     Vault,
     VaultError,
@@ -162,7 +162,7 @@ def pull(
     relpaths = files if files else stored_files(vault, slug)
     if not relpaths:
         raise EntryNotFoundError(
-            f"no env files stored for {slug!r} — run `tupacs env push` in that repo first"
+            f"no env files stored for {slug!r} — run `sekrt env push` in that repo first"
         )
 
     results: list[tuple[str, str]] = []

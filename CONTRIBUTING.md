@@ -1,11 +1,11 @@
-# Contributing to tupacs
+# Contributing to sekrt
 
 Thanks for helping out! 🔐
 
 ## Setup
 
 ```bash
-git clone https://github.com/alberto-rota/tupacs && cd tupacs
+git clone https://github.com/alberto-rota/sekrt && cd sekrt
 uv sync            # creates .venv with all dev dependencies
 uv run pytest      # run the test suite
 uv run ruff check .
@@ -14,8 +14,8 @@ uv run ruff check .
 Try your changes against a throwaway vault so you never touch your real one:
 
 ```bash
-export TUPACS_VAULT=/tmp/tupacs-dev TUPACS_PASSPHRASE=dev
-uv run tupacs init && uv run tupacs
+export SEKRT_VAULT=/tmp/sekrt-dev SEKRT_PASSPHRASE=dev
+uv run sekrt init && uv run sekrt
 ```
 
 ## Guidelines
@@ -32,7 +32,7 @@ uv run tupacs init && uv run tupacs
 
 ## Releasing (maintainers)
 
-1. Bump `version` in `pyproject.toml` and `src/tupacs/__init__.py`.
+1. Bump `version` in `pyproject.toml` and `src/sekrt/__init__.py`.
 2. Update `CHANGELOG.md`.
 3. Tag: `git tag v0.x.y && git push --tags`.
 4. Create a GitHub release — the `publish.yml` workflow uploads to PyPI via

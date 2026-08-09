@@ -2,7 +2,7 @@ import json
 import subprocess
 import sys
 
-from tupacs import session
+from sekrt import session
 
 
 def test_store_load_clear(tmp_path):
@@ -41,7 +41,7 @@ def test_private_tmpdir_rejects_planted_symlink(tmp_path):
     victim = tmp_path / "elsewhere"
     victim.mkdir(mode=0o755)
     uid = getattr(session.os, "getuid", lambda: "u")()
-    (runtime / f"tupacs-{uid}").symlink_to(victim)
+    (runtime / f"sekrt-{uid}").symlink_to(victim)
 
     d = session.private_tmpdir()
     assert d is None or not str(d).startswith(str(runtime))

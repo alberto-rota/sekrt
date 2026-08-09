@@ -1,13 +1,13 @@
-"""The tupacs vault: a directory of individually-encrypted entries.
+"""The sekrt vault: a directory of individually-encrypted entries.
 
 Layout (mirrors `pass`, one file per secret, so git diffs stay small)::
 
-    ~/.local/share/tupacs/
-        .tupacs.json          # vault config: KDF params, keycheck, options
+    ~/.local/share/sekrt/
+        .sekrt.json          # vault config: KDF params, keycheck, options
         .gitattributes
-        work/github.tup        # entry "work/github"
-        env/github.com/you/proj/.env.tup
-        ssh/deploy-key.tup
+        work/github.skr        # entry "work/github"
+        env/github.com/you/proj/.env.skr
+        ssh/deploy-key.skr
 
 Entry names and folder structure are visible metadata (like `pass`);
 contents are AES-256-GCM encrypted with the entry name as associated data.
@@ -26,11 +26,11 @@ import tempfile
 import time
 from pathlib import Path
 
-from tupacs import crypto, gitsync
-from tupacs.crypto import KdfParams, WrongPassphraseError
+from sekrt import compat, crypto, gitsync
+from sekrt.crypto import KdfParams, WrongPassphraseError
 
-CONFIG_NAME = ".tupacs.json"
-ENTRY_SUFFIX = ".tup"
+CONFIG_NAME = ".sekrt.json"
+ENTRY_SUFFIX = ".skr"
 ENTRY_VERSION = 1
 
 # The passphrase is the vault's entire security: anyone holding the vault
@@ -70,10 +70,10 @@ class InvalidNameError(VaultError):
 
 
 def default_vault_dir() -> Path:
-    if env := os.environ.get("TUPACS_VAULT"):
-        return Path(env).expanduser()
+    if override := compat.env("VAULT"):
+        return Path(override).expanduser()
     data_home = os.environ.get("XDG_DATA_HOME") or "~/.local/share"
-    return Path(data_home).expanduser() / "tupacs"
+    return Path(data_home).expanduser() / "sekrt"
 
 
 def validate_name(name: str) -> str:
@@ -136,7 +136,7 @@ class Vault:
     def _config(self) -> dict:
         if not self.initialized:
             raise VaultNotInitializedError(
-                f"no vault at {self.path} — run `tupacs init` first"
+                f"no vault at {self.path} — run `sekrt init` first"
             )
         try:
             return json.loads(self.config_path.read_text())
@@ -164,7 +164,7 @@ class Vault:
         }
         self._save_config(config)
         gitsync.ensure_repo(self.path)
-        gitsync.commit_all(self.path, "tupacs: initialize vault")
+        gitsync.commit_all(self.path, "sekrt: initialize vault")
         return key
 
     def unlock(self, passphrase: str) -> bytes:
@@ -191,15 +191,26 @@ class Vault:
         config = self._config()
         config["auto_sync"] = enabled
         self._save_config(config)
-        self._commit(f"tupacs: auto-sync {'on' if enabled else 'off'}")
+        self._commit(f"sekrt: auto-sync {'on' if enabled else 'off'}")
 
     # -- entries -------------------------------------------------------------
 
     def _entry_file(self, name: str) -> Path:
+        """On-disk path for *name*, resolving to whichever suffix is already there.
+
+        Entries written before the rename end in ``.tup`` instead of ``.skr``.
+        Returning the existing path means a pre-rename vault keeps working and
+        an update rewrites the file in place, rather than leaving the old one
+        behind as a duplicate entry.
+        """
         validate_name(name)
         file = self.path / (name + ENTRY_SUFFIX)
         if not file.resolve().is_relative_to(self.path.resolve()):
             raise InvalidNameError(f"entry name escapes the vault: {name!r}")
+        if not file.is_file():
+            legacy = file.with_name(file.name[: -len(ENTRY_SUFFIX)] + compat.LEGACY_ENTRY_SUFFIX)
+            if legacy.is_file():
+                return legacy
         return file
 
     def exists(self, name: str) -> bool:
@@ -208,16 +219,17 @@ class Vault:
     def list_entries(self, prefix: str = "") -> list[str]:
         if not self.initialized:
             raise VaultNotInitializedError(
-                f"no vault at {self.path} — run `tupacs init` first"
+                f"no vault at {self.path} — run `sekrt init` first"
             )
-        names = []
-        for file in self.path.rglob(f"*{ENTRY_SUFFIX}"):
-            rel = file.relative_to(self.path)
-            if rel.parts[0] == ".git":
-                continue
-            name = str(rel)[: -len(ENTRY_SUFFIX)]
-            if name.startswith(prefix):
-                names.append(name)
+        names = set()
+        for suffix in (ENTRY_SUFFIX, compat.LEGACY_ENTRY_SUFFIX):
+            for file in self.path.rglob(f"*{suffix}"):
+                rel = file.relative_to(self.path)
+                if rel.parts[0] == ".git":
+                    continue
+                name = str(rel)[: -len(suffix)]
+                if name.startswith(prefix):
+                    names.add(name)
         return sorted(names)
 
     def search(self, query: str) -> list[str]:
@@ -288,15 +300,15 @@ class Vault:
         self._save_config(config)
         for name, entry in entries.items():
             blob = crypto.encrypt(new_key, json.dumps(entry).encode(), aad=name.encode())
-            _atomic_write(self.path / (name + ENTRY_SUFFIX), blob)
-        self._commit("tupacs: rekey vault")
+            _atomic_write(self._entry_file(name), blob)
+        self._commit("sekrt: rekey vault")
         return new_key
 
     # -- git -----------------------------------------------------------------
 
     def _commit(self, message: str) -> None:
         if gitsync.commit_all(self.path, message) and self.auto_sync:
-            gitsync.push(self.path)  # best-effort; `tupacs sync` reports errors
+            gitsync.push(self.path)  # best-effort; `sekrt sync` reports errors
 
 
 def _check_passphrase(passphrase: str) -> None:
@@ -310,7 +322,7 @@ def _check_passphrase(passphrase: str) -> None:
 def _atomic_write(path: Path, data: bytes) -> None:
     """Write with 0600 permissions, atomically (write temp file + rename)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tup-tmp-")
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".skr-tmp-")
     try:
         try:
             os.write(fd, data)

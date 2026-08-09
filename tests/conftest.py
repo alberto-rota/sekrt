@@ -4,7 +4,7 @@ import subprocess
 import pytest
 from click.testing import CliRunner
 
-from tupacs.vault import Vault
+from sekrt.vault import Vault
 
 PASSPHRASE = "correct horse battery staple"
 
@@ -14,7 +14,7 @@ requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not i
 @pytest.fixture(autouse=True)
 def fast_kdf(monkeypatch):
     """Keep scrypt cheap in tests (still a power of two >= 1024)."""
-    monkeypatch.setenv("TUPACS_SCRYPT_N", "2048")
+    monkeypatch.setenv("SEKRT_SCRYPT_N", "2048")
 
 
 @pytest.fixture(autouse=True)
@@ -30,8 +30,8 @@ def isolated_session(tmp_path, monkeypatch):
 @pytest.fixture
 def vault_dir(tmp_path, monkeypatch):
     d = tmp_path / "vault"
-    monkeypatch.setenv("TUPACS_VAULT", str(d))
-    monkeypatch.setenv("TUPACS_PASSPHRASE", PASSPHRASE)
+    monkeypatch.setenv("SEKRT_VAULT", str(d))
+    monkeypatch.setenv("SEKRT_PASSPHRASE", PASSPHRASE)
     return d
 
 

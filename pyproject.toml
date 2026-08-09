@@ -1,6 +1,6 @@
 [project]
-name = "tupacs"
-version = "0.1.0"
+name = "sekrt"
+version = "0.2.0"
 description = "A TUI + CLI secret manager for developers: passwords, API keys, SSH keys and .env files — encrypted locally, synced with git."
 readme = "README.md"
 license = "MIT"
@@ -41,13 +41,13 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/alberto-rota/tupacs"
-Repository = "https://github.com/alberto-rota/tupacs"
-Issues = "https://github.com/alberto-rota/tupacs/issues"
-Changelog = "https://github.com/alberto-rota/tupacs/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/alberto-rota/sekrt"
+Repository = "https://github.com/alberto-rota/sekrt"
+Issues = "https://github.com/alberto-rota/sekrt/issues"
+Changelog = "https://github.com/alberto-rota/sekrt/blob/main/CHANGELOG.md"
 
 [project.scripts]
-tupacs = "tupacs.cli:main"
+sekrt = "sekrt.cli:main"
 
 [dependency-groups]
 dev = [
@@ -61,7 +61,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/tupacs"]
+packages = ["src/sekrt"]
 
 [tool.ruff]
 line-length = 100

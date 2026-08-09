@@ -1,22 +1,21 @@
-"""tupacs command-line interface."""
+"""sekrt command-line interface."""
 
 from __future__ import annotations
 
 import difflib
 import functools
 import json
-import os
 import re
 from pathlib import Path
 
 import click
 
-from tupacs import __version__, clipboard, envtools, gitsync, session, sshtools
-from tupacs.clipboard import ClipboardError
-from tupacs.crypto import CryptoError, WrongPassphraseError
-from tupacs.generate import DEFAULT_LENGTH, generate_password, generate_token
-from tupacs.util import EditorError, edit_text
-from tupacs.vault import (
+from sekrt import __version__, clipboard, compat, envtools, gitsync, session, sshtools
+from sekrt.clipboard import ClipboardError
+from sekrt.crypto import CryptoError, WrongPassphraseError
+from sekrt.generate import DEFAULT_LENGTH, generate_password, generate_token
+from sekrt.util import EditorError, edit_text
+from sekrt.vault import (
     PRIMARY_FIELD,
     Vault,
     VaultError,
@@ -28,7 +27,7 @@ SENSITIVE_FIELDS = {"password", "key", "secret", "token", "private", "content", 
 MASK = "********"
 
 # C0/C1 control characters minus \t and \n — entry data can originate from
-# files other people authored (`tupacs env push`), so `show` must not let
+# files other people authored (`sekrt env push`), so `show` must not let
 # ANSI escape sequences reach the terminal.
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
@@ -68,17 +67,18 @@ def get_vault(must_exist: bool = True) -> Vault:
     vault = Vault()
     if must_exist and not vault.initialized:
         raise click.ClickException(
-            f"no vault found at {vault.path} — create one with `tupacs init`"
+            f"no vault found at {vault.path} — create one with `sekrt init`"
+            + compat.migration_hint()
         )
     return vault
 
 
 def obtain_key(vault: Vault) -> bytes:
-    """Session cache -> $TUPACS_PASSPHRASE -> interactive prompt."""
+    """Session cache -> $SEKRT_PASSPHRASE -> interactive prompt."""
     key = session.load_key(vault.path)
     if key is not None and vault.verify_key(key):
         return key
-    phrase = os.environ.get("TUPACS_PASSPHRASE")
+    phrase = compat.env("PASSPHRASE")
     if phrase is not None:
         return vault.unlock(phrase)
     for attempt in range(3):
@@ -97,16 +97,16 @@ def _suggest(vault: Vault, name: str) -> str:
 
 
 @click.group(cls=AliasedGroup, invoke_without_command=True)
-@click.version_option(version=__version__, prog_name="tupacs")
+@click.version_option(version=__version__, prog_name="sekrt")
 @click.pass_context
 def main(ctx: click.Context) -> None:
-    """🔐 tupacs — passwords, API keys, SSH keys and .env files, encrypted and git-synced.
+    """🔐 sekrt — passwords, API keys, SSH keys and .env files, encrypted and git-synced.
 
-    Run without arguments to open the TUI. Vault location: ~/.local/share/tupacs
-    (override with $TUPACS_VAULT).
+    Run without arguments to open the TUI. Vault location: ~/.local/share/sekrt
+    (override with $SEKRT_VAULT).
     """
     if ctx.invoked_subcommand is None:
-        from tupacs.tui.app import run_tui
+        from sekrt.tui.app import run_tui
 
         run_tui()
 
@@ -122,7 +122,7 @@ def init(remote_url: str | None) -> None:
     vault = get_vault(must_exist=False)
     if vault.initialized:
         raise click.ClickException(f"vault already exists at {vault.path}")
-    phrase = os.environ.get("TUPACS_PASSPHRASE") or click.prompt(
+    phrase = compat.env("PASSPHRASE") or click.prompt(
         "Choose a vault passphrase", hide_input=True, confirmation_prompt=True
     )
     vault.create(phrase)
@@ -130,9 +130,9 @@ def init(remote_url: str | None) -> None:
         gitsync.set_remote(vault.path, remote_url)
     click.secho(f"✔ vault created at {vault.path}", fg="green")
     if remote_url:
-        click.echo(f"  remote set to {remote_url} — push with `tupacs sync`")
+        click.echo(f"  remote set to {remote_url} — push with `sekrt sync`")
     else:
-        click.echo("  connect a private GitHub repo with `tupacs remote <url>`")
+        click.echo("  connect a private GitHub repo with `sekrt remote <url>`")
 
 
 @main.command()
@@ -179,7 +179,7 @@ def status() -> None:
     ttl = session.remaining(vault.path)
     click.echo(f"vault     {vault.path}")
     click.echo(f"entries   {len(entries)}")
-    click.echo(f"remote    {remote or '(none — set with `tupacs remote <url>`)'}")
+    click.echo(f"remote    {remote or '(none — set with `sekrt remote <url>`)'}")
     click.echo(f"autosync  {'on' if vault.auto_sync else 'off'}")
     click.echo(f"session   {'unlocked, ' + str(ttl // 60) + ' min left' if ttl else 'locked'}")
 
@@ -204,9 +204,9 @@ def add(name, type_, username, url, notes, generate_, length, no_symbols, show, 
     """Add an entry (a password, an API key, or a note).
 
     \b
-      tupacs add work/github -u alberto -g
-      tupacs add cloud/aws-key -t api_key
-      tupacs add wifi/office -t note --notes "WPA2 ..."
+      sekrt add work/github -u alberto -g
+      sekrt add cloud/aws-key -t api_key
+      sekrt add wifi/office -t note --notes "WPA2 ..."
     """
     vault = get_vault()
     key = obtain_key(vault)
@@ -243,7 +243,7 @@ def add(name, type_, username, url, notes, generate_, length, no_symbols, show, 
         elif copied:
             click.echo(f"  generated {length}-char secret copied to clipboard (clears in 45s)")
         else:
-            click.echo("  generated secret stored — reveal with `tupacs get " + name + "`")
+            click.echo("  generated secret stored — reveal with `sekrt get " + name + "`")
 
 
 @main.command()
@@ -305,7 +305,7 @@ def ls(prefix: str) -> None:
     vault = get_vault()
     names = vault.list_entries(prefix)
     if not names:
-        click.echo("(vault is empty — add something with `tupacs add`)" if not prefix
+        click.echo("(vault is empty — add something with `sekrt add`)" if not prefix
                    else f"(nothing under {prefix!r})")
         return
     for name in names:
@@ -404,7 +404,7 @@ def remote(url: str) -> None:
     vault = get_vault()
     gitsync.set_remote(vault.path, url)
     click.secho(f"✔ remote set to {url}", fg="green")
-    click.echo("  run `tupacs sync` to push, `tupacs autosync on` to push automatically")
+    click.echo("  run `sekrt sync` to push, `sekrt autosync on` to push automatically")
 
 
 @main.command()
@@ -432,7 +432,7 @@ def autosync(state: str) -> None:
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 @friendly_errors
 def git(args: tuple[str, ...]) -> None:
-    """Run a raw git command inside the vault (e.g. `tupacs git log --oneline`)."""
+    """Run a raw git command inside the vault (e.g. `sekrt git log --oneline`)."""
     import subprocess
 
     vault = get_vault()
@@ -485,7 +485,7 @@ def env_ls() -> None:
     vault = get_vault()
     stored = envtools.list_all(vault)
     if not stored:
-        click.echo("(no env files stored — run `tupacs env push` inside a repo)")
+        click.echo("(no env files stored — run `sekrt env push` inside a repo)")
         return
     _, current = envtools.current_context()
     for item in stored:
@@ -543,7 +543,7 @@ def ssh_add(name, key_path, generate_, comment, force) -> None:
     vault = get_vault()
     key = obtain_key(vault)
     if generate_:
-        comment = comment or f"{name}@tupacs"
+        comment = comment or f"{name}@sekrt"
         private, public = sshtools.generate_ed25519(comment)
         filename = ""
     else:
@@ -608,8 +608,8 @@ def ssh_pub(name: str) -> None:
 @main.command()
 @friendly_errors
 def tui() -> None:
-    """Open the interactive TUI (same as running `tupacs` with no arguments)."""
-    from tupacs.tui.app import run_tui
+    """Open the interactive TUI (same as running `sekrt` with no arguments)."""
+    from sekrt.tui.app import run_tui
 
     run_tui()
 

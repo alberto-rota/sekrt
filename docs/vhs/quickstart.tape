@@ -1,7 +1,7 @@
-# Regenerate: `vhs docs/vhs/quickstart.tape` (from repo root, with tupacs installed)
+# Regenerate: `vhs docs/vhs/quickstart.tape` (from repo root, with sekrt installed)
 Output docs/quickstart.gif
 
-Require tupacs
+Require sekrt
 
 Set Shell bash
 Set FontSize 18
@@ -12,39 +12,39 @@ Set Theme "Catppuccin Mocha"
 Set TypingSpeed 45ms
 Set Padding 20
 
-Env TUPACS_VAULT "/tmp/tupacs-vhs-demo"
-Env TUPACS_PASSPHRASE "demo-passphrase-only"
+Env SEKRT_VAULT "/tmp/sekrt-vhs-demo"
+Env SEKRT_PASSPHRASE "demo-passphrase-only"
 
 Hide
-Type "rm -rf /tmp/tupacs-vhs-demo && clear"
+Type "rm -rf /tmp/sekrt-vhs-demo && clear"
 Enter
 Sleep 500ms
 Show
 
-Type "tupacs init"
+Type "sekrt init"
 Enter
 Sleep 6s
 
-Type "tupacs add work/github -u alberto -g"
+Type "sekrt add work/github -u alberto -g"
 Enter
 Sleep 5s
 
-Type "tupacs get work/github"
+Type "sekrt get work/github"
 Enter
 Sleep 4s
 
-Type "tupacs add cloud/aws -t api_key -g"
+Type "sekrt add cloud/aws -t api_key -g"
 Enter
 Sleep 5s
 
-Type "tupacs ls"
+Type "sekrt ls"
 Enter
 Sleep 3s
 
-Type "tupacs show work/github"
+Type "sekrt show work/github"
 Enter
 Sleep 5s
 
-Type "tupacs status"
+Type "sekrt status"
 Enter
 Sleep 3s
