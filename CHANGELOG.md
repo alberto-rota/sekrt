@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/) and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Documentation
+- `docs/env.md`: a full guide to the `.env` workflow — how repos are identified
+  from their `origin` URL, monorepos with several env files, the push/pull
+  overwrite rules, `--repo` for forks and renames, what the sync remote can see,
+  and troubleshooting.
+- Three new VHS demos of that workflow (`docs/env*.gif`), recorded from
+  self-contained tapes in `docs/vhs/` against a throwaway fixture built by
+  `docs/vhs/setup-env-demo.sh`.
+
 ## [0.1.0] - 2026-08-07
 
 Initial release.

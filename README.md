@@ -126,10 +126,17 @@ git clone git@github.com:you/my-saas.git && cd my-saas
 tupacs env pull         # .env is back, byte for byte (0600 perms)
 ```
 
-It works with multiple env files per repo (`tupacs env push apps/api/.env.production`),
-detects unchanged/modified files, never overwrites local edits without
-`--force`, and `tupacs env ls` shows everything you've stored (repos without
-a git remote fall back to a `local/<dirname>` key).
+![The .env round trip](docs/env.gif)
+
+The key is the repo's `origin` URL, not the path on disk — so a clone anywhere
+finds its own file, and HTTPS vs SSH remotes resolve to the same key. It
+handles several env files per repo (`tupacs env push .env apps/*/.env.*`),
+reports what actually changed rather than rewriting blindly, and never
+overwrites a local file you've edited without `--force`.
+
+**📄 [Full guide: the `.env` workflow](docs/env.md)** — how repos are
+identified, monorepos with one env file per service, the overwrite rules, using
+`--repo` for forks and renames, what the remote can see, and troubleshooting.
 
 ## SSH keys
 
@@ -175,7 +182,7 @@ tupacs edit NAME                edit fields in $EDITOR
 tupacs mv OLD NEW               rename                      (alias: rename)
 tupacs rm NAME [-f]             delete                      (alias: remove)
 tupacs generate [LEN] [--token] generate without storing
-tupacs env push|pull|ls|show|rm .env files per repository
+tupacs env push|pull|ls|show|rm .env files per repository    (guide: docs/env.md)
 tupacs ssh add|restore|ls|pub   SSH keypairs
 tupacs remote URL               set the sync remote
 tupacs sync                     pull --rebase + push
@@ -265,12 +272,21 @@ uv run tupacs init && uv run tupacs
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 The `docs/*.gif` demos are recorded with [VHS](https://github.com/charmbracelet/vhs)
-from the tapes in `docs/vhs/`:
+from the tapes in `docs/vhs/`. Run them from the repo root with `tupacs` on
+`$PATH` (`brew install vhs`, then `uv tool install --editable .`):
 
 ```bash
 vhs docs/vhs/quickstart.tape   # -> docs/quickstart.gif
 vhs docs/vhs/tui.tape          # -> docs/tui.gif (run quickstart.tape first to seed the demo vault)
+vhs docs/vhs/env.tape          # -> docs/env.gif
+vhs docs/vhs/env-multi.tape    # -> docs/env-multi.gif
+vhs docs/vhs/env-safety.tape   # -> docs/env-safety.gif
 ```
+
+The three `env` tapes are self-contained: each one rebuilds its fixture — real
+git repos with remotes, a fresh clone, and a scratch vault under
+`/tmp/tupacs-vhs-env` — by running `docs/vhs/setup-env-demo.sh`, and points
+`$HOME` at it, so your real vault and `~/.gitconfig` are never touched.
 
 ## Roadmap
 
