@@ -5,7 +5,7 @@
 # Preamble duplicated across the env tapes on purpose — see the note in env.tape.
 Output docs/env-multi.gif
 
-Require tupacs
+Require sekrt
 Require bash
 Require git
 
@@ -18,9 +18,9 @@ Set Theme "Catppuccin Mocha"
 Set TypingSpeed 45ms
 Set Padding 20
 
-Env HOME "/tmp/tupacs-vhs-env"
-Env GIT_CONFIG_GLOBAL "/tmp/tupacs-vhs-env/.gitconfig"
-Env TUPACS_PASSPHRASE "demo-passphrase-only"
+Env HOME "/tmp/sekrt-vhs-env"
+Env GIT_CONFIG_GLOBAL "/tmp/sekrt-vhs-env/.gitconfig"
+Env SEKRT_PASSPHRASE "demo-passphrase-only"
 Env GIT_PAGER "cat"
 Env PAGER "cat"
 
@@ -30,7 +30,7 @@ Enter
 Wait+Screen@90s /demo home ready/
 Type `export PS1="\[\e[38;5;147m\]\w\[\e[0m\] $ "`
 Enter
-Type "cd ~/code/acme-platform && tupacs unlock -t 30 >/dev/null && clear"
+Type "cd ~/code/acme-platform && sekrt unlock -t 30 >/dev/null && clear"
 Enter
 Sleep 1s
 Show
@@ -45,11 +45,11 @@ Enter
 Sleep 3s
 
 # Ordinary shell globbing — `push` just takes paths, however you spell them.
-Type "tupacs env push .env apps/*/.env.* infra/.env.staging"
+Type "sekrt env push .env apps/*/.env.* infra/.env.staging"
 Enter
 Sleep 4s
 
-Type "tupacs env ls"
+Type "sekrt env ls"
 Enter
 Sleep 4s
 
@@ -64,14 +64,14 @@ Type "# each file is its own encrypted entry — read one back without a checkou
 Enter
 Sleep 1500ms
 
-Type "tupacs env show apps/api/.env.production"
+Type "sekrt env show apps/api/.env.production"
 Enter
 Sleep 3500ms
 
-Type "# every push is a commit — `tupacs sync` is what sends them to the remote"
+Type "# every push is a commit — `sekrt sync` is what sends them to the remote"
 Enter
 Sleep 1500ms
 
-Type "tupacs git log --oneline -5"
+Type "sekrt git log --oneline -5"
 Enter
 Sleep 4s

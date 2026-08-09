@@ -2,17 +2,17 @@
 # Build the fixture the `.env` demo tapes record against.
 #
 # The tapes need something the real workflow can't fake: actual git repos with
-# an `origin` remote (that URL is what tupacs keys stored env files by) and a
+# an `origin` remote (that URL is what sekrt keys stored env files by) and a
 # *fresh clone* of one of them with no `.env` in it. This script creates both,
 # plus a throwaway vault, under a single directory used as a fake $HOME so the
 # recorded prompt reads `~/code/my-saas` instead of a /tmp path.
 #
-# Usage: setup-env-demo.sh [DEMO_HOME]        (default: /tmp/tupacs-vhs-env)
+# Usage: setup-env-demo.sh [DEMO_HOME]        (default: /tmp/sekrt-vhs-env)
 # Safe to re-run: the directory is deleted and rebuilt from scratch.
 
 set -euo pipefail
 
-DEMO_HOME="${1:-/tmp/tupacs-vhs-env}"
+DEMO_HOME="${1:-/tmp/sekrt-vhs-env}"
 
 case "$DEMO_HOME" in
     /tmp/* | /private/tmp/* | /var/folders/*) ;;
@@ -22,7 +22,7 @@ esac
 rm -rf "$DEMO_HOME"
 mkdir -p "$DEMO_HOME/code" "$DEMO_HOME/clones"
 
-# Fake HOME: git needs an identity to commit, and tupacs' auto-commits would
+# Fake HOME: git needs an identity to commit, and sekrt's auto-commits would
 # fail without one. Also keeps the demo off the real ~/.gitconfig.
 cat > "$DEMO_HOME/.gitconfig" <<'EOF'
 [user]
@@ -67,7 +67,7 @@ EOF
 cat > "$saas/README.md" <<'EOF'
 # my-saas
 
-Copy `.env.example` to `.env` and fill it in. (Or: `tupacs env pull`.)
+Copy `.env.example` to `.env` and fill it in. (Or: `sekrt env pull`.)
 EOF
 
 git -C "$saas" add -A
@@ -122,10 +122,10 @@ git -C "$scratch" add -A
 git -C "$scratch" -c commit.gpgsign=false commit -qm "Initial commit"
 
 # --- the vault -----------------------------------------------------------
-# TUPACS_PASSPHRASE makes init non-interactive; the vault lands in the fake
+# SEKRT_PASSPHRASE makes init non-interactive; the vault lands in the fake
 # HOME's default location so nothing in the demo references a /tmp path.
-export TUPACS_PASSPHRASE="${TUPACS_PASSPHRASE:-demo-passphrase-only}"
-tupacs init >/dev/null
-tupacs add work/github -u alberto -g >/dev/null   # so `ls` isn't env-only
+export SEKRT_PASSPHRASE="${SEKRT_PASSPHRASE:-demo-passphrase-only}"
+sekrt init >/dev/null
+sekrt add work/github -u alberto -g >/dev/null   # so `ls` isn't env-only
 
 echo "demo home ready: $DEMO_HOME"

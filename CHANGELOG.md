@@ -4,7 +4,29 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/) and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0] - unreleased
+
+### Changed — the project is now called `sekrt` (was `tupacs`)
+
+Everything user-facing follows the name: the `sekrt` command, the `sekrt`
+import package, `SEKRT_*` environment variables, the default vault at
+`~/.local/share/sekrt`, its `.sekrt.json` config, and `.skr` entry files.
+
+**Migrating a 0.1.0 vault.** Environment variables and entry files are handled
+for you — `TUPACS_VAULT`/`TUPACS_PASSPHRASE` still work as fallbacks, and `.tup`
+entries written by 0.1.0 are read (and updated) in place. The vault *directory*
+is deliberately left alone, because silently reading a differently-named
+directory would hide where your secrets live. Move it once:
+
+```bash
+mv ~/.local/share/tupacs ~/.local/share/sekrt
+mv ~/.local/share/sekrt/.tupacs.json ~/.local/share/sekrt/.sekrt.json
+sekrt git commit -am "rename vault config"   # the vault is a git repo
+```
+
+Running any command before you do prints these instructions. To finish the job,
+rename your `TUPACS_*` variables and re-point the git remote if you renamed the
+GitHub repository too.
 
 ### Documentation
 - `docs/env.md`: a full guide to the `.env` workflow — how repos are identified

@@ -1,11 +1,11 @@
-"""Encryption primitives for tupacs.
+"""Encryption primitives for sekrt.
 
 Every entry is encrypted independently with AES-256-GCM. The 256-bit key is
 derived from the vault passphrase with scrypt (parameters stored, per-vault
 random salt). Each entry uses its logical name as GCM associated data, so a
 ciphertext cannot be silently swapped to a different entry name.
 
-Entry file format: ``b"TUP1" || nonce (12 bytes) || ciphertext+tag``.
+Entry file format: ``b"SKR1" || nonce (12 bytes) || ciphertext+tag``.
 """
 
 from __future__ import annotations
@@ -18,11 +18,19 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
-MAGIC = b"TUP1"
+from sekrt import compat
+
+MAGIC = b"SKR1"
 KEY_LEN = 32
 NONCE_LEN = 12
-KEYCHECK_PLAINTEXT = b"tupacs keycheck v1"
+KEYCHECK_PLAINTEXT = b"sekrt keycheck v1"
 KEYCHECK_AAD = b"keycheck"
+
+# Written by versions published under the old project name (<= 0.1.0). Read but
+# never written: a vault made before the rename must keep opening, and a wrong
+# keycheck constant would report "wrong passphrase" for a correct passphrase.
+LEGACY_MAGIC = b"TUP1"
+LEGACY_KEYCHECK_PLAINTEXT = b"tupacs keycheck v1"
 
 DEFAULT_SCRYPT_N = 2**15  # ~32 MiB, <100ms on a modern laptop
 DEFAULT_SCRYPT_R = 8
@@ -74,7 +82,7 @@ class KdfParams:
 
     @classmethod
     def generate(cls) -> KdfParams:
-        n = int(os.environ.get("TUPACS_SCRYPT_N", DEFAULT_SCRYPT_N))
+        n = int(compat.env("SCRYPT_N") or DEFAULT_SCRYPT_N)
         validate_scrypt_params(n, DEFAULT_SCRYPT_R, DEFAULT_SCRYPT_P)
         return cls(salt=os.urandom(16), n=n)
 
@@ -112,10 +120,11 @@ def encrypt(key: bytes, plaintext: bytes, aad: bytes = b"") -> bytes:
 
 
 def decrypt(key: bytes, blob: bytes, aad: bytes = b"") -> bytes:
-    if not blob.startswith(MAGIC) or len(blob) < len(MAGIC) + NONCE_LEN + 16:
-        raise DecryptionError("not a tupacs entry (bad header)")
-    nonce = blob[len(MAGIC) : len(MAGIC) + NONCE_LEN]
-    ciphertext = blob[len(MAGIC) + NONCE_LEN :]
+    magic = next((m for m in (MAGIC, LEGACY_MAGIC) if blob.startswith(m)), None)
+    if magic is None or len(blob) < len(magic) + NONCE_LEN + 16:
+        raise DecryptionError("not a sekrt entry (bad header)")
+    nonce = blob[len(magic) : len(magic) + NONCE_LEN]
+    ciphertext = blob[len(magic) + NONCE_LEN :]
     try:
         return AESGCM(key).decrypt(nonce, ciphertext, aad or None)
     except InvalidTag as exc:
@@ -130,6 +139,7 @@ def make_keycheck(key: bytes) -> str:
 
 def verify_keycheck(key: bytes, keycheck: str) -> bool:
     try:
-        return decrypt(key, base64.b64decode(keycheck), aad=KEYCHECK_AAD) == KEYCHECK_PLAINTEXT
+        value = decrypt(key, base64.b64decode(keycheck), aad=KEYCHECK_AAD)
     except (CryptoError, ValueError):
         return False
+    return value in (KEYCHECK_PLAINTEXT, LEGACY_KEYCHECK_PLAINTEXT)

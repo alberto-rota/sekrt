@@ -1,4 +1,4 @@
-"""The tupacs TUI: browse, add, edit, copy and sync — all from the keyboard."""
+"""The sekrt TUI: browse, add, edit, copy and sync — all from the keyboard."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Input, Label, Select, Static, TextArea, Tree
 
-from tupacs import clipboard, gitsync, session
-from tupacs.crypto import CryptoError, WrongPassphraseError
-from tupacs.generate import generate_password
-from tupacs.vault import Vault, VaultError, new_entry, primary_field
+from sekrt import clipboard, gitsync, session
+from sekrt.crypto import CryptoError, WrongPassphraseError
+from sekrt.generate import generate_password
+from sekrt.vault import Vault, VaultError, new_entry, primary_field
 
 SENSITIVE_FIELDS = {"password", "key", "secret", "token", "private", "content", "notes"}
 MASK = "••••••••••"
@@ -36,7 +36,7 @@ class UnlockScreen(ModalScreen[bytes]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="unlock-box"):
-            yield Label("🔐 tupacs", id="unlock-title")
+            yield Label("🔐 sekrt", id="unlock-title")
             yield Label(f"{self.vault.path}", id="unlock-path")
             yield Input(password=True, placeholder="passphrase…", id="unlock-input")
             yield Static("", id="unlock-error")
@@ -168,8 +168,8 @@ class ConfirmModal(ModalScreen[bool]):
         self.dismiss(False)
 
 
-class TupacsApp(App[None]):
-    TITLE = "tupacs"
+class SekrtApp(App[None]):
+    TITLE = "sekrt"
     SUB_TITLE = "your secrets, encrypted & synced"
 
     CSS = """
@@ -377,7 +377,7 @@ class TupacsApp(App[None]):
         if self.current_entry["type"] not in EDITABLE_TYPES:
             self.notify(
                 f"{self.current_entry['type']} entries are managed via the CLI "
-                "(tupacs env / tupacs ssh)",
+                "(sekrt env / sekrt ssh)",
                 severity="warning",
             )
             return
@@ -478,6 +478,6 @@ def run_tui() -> None:
     vault = Vault()
     if not vault.initialized:
         raise SystemExit(
-            f"no vault found at {vault.path} — create one with `tupacs init`"
+            f"no vault found at {vault.path} — create one with `sekrt init`"
         )
-    TupacsApp(vault=vault).run()
+    SekrtApp(vault=vault).run()

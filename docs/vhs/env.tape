@@ -6,7 +6,7 @@
 # silently override the per-tape Height each tape needs.
 Output docs/env.gif
 
-Require tupacs
+Require sekrt
 Require bash
 Require git
 
@@ -22,12 +22,12 @@ Set Padding 20
 # A fake $HOME pointed at the demo fixture (see setup-env-demo.sh): the prompt
 # reads `~/code/my-saas` instead of a /tmp path, the vault lands somewhere
 # throwaway, and the real ~/.gitconfig is untouched.
-Env HOME "/tmp/tupacs-vhs-env"
-Env GIT_CONFIG_GLOBAL "/tmp/tupacs-vhs-env/.gitconfig"
+Env HOME "/tmp/sekrt-vhs-env"
+Env GIT_CONFIG_GLOBAL "/tmp/sekrt-vhs-env/.gitconfig"
 
 # Non-interactive passphrase, so the demo stays about `env` rather than about
 # passphrase prompts. Never do this outside a throwaway demo vault.
-Env TUPACS_PASSPHRASE "demo-passphrase-only"
+Env SEKRT_PASSPHRASE "demo-passphrase-only"
 
 # git on a tty opens `less`, which would eat every keystroke typed after it.
 Env GIT_PAGER "cat"
@@ -39,7 +39,7 @@ Enter
 Wait+Screen@90s /demo home ready/
 Type `export PS1="\[\e[38;5;147m\]\w\[\e[0m\] $ "`
 Enter
-Type "cd ~/code/my-saas && tupacs unlock -t 30 >/dev/null && clear"
+Type "cd ~/code/my-saas && sekrt unlock -t 30 >/dev/null && clear"
 Enter
 Sleep 1s
 Show
@@ -61,11 +61,11 @@ Type "# encrypt it into the vault, keyed by this repo's origin URL"
 Enter
 Sleep 1500ms
 
-Type "tupacs env push"
+Type "sekrt env push"
 Enter
 Sleep 3s
 
-Type "tupacs env ls"
+Type "sekrt env ls"
 Enter
 Sleep 3s
 
@@ -96,7 +96,7 @@ Type "# no .env, as expected. one command:"
 Enter
 Sleep 1500ms
 
-Type "tupacs env pull"
+Type "sekrt env pull"
 Enter
 Sleep 2500ms
 

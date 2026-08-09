@@ -1,7 +1,7 @@
 import pytest
 
-from tupacs.tui.app import TupacsApp
-from tupacs.vault import new_entry
+from sekrt.tui.app import SekrtApp
+from sekrt.vault import new_entry
 
 
 @pytest.fixture
@@ -14,7 +14,7 @@ def populated_vault(vault):
 
 async def test_tree_lists_entries(populated_vault):
     v, key = populated_vault
-    app = TupacsApp(vault=v, key=key)
+    app = SekrtApp(vault=v, key=key)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         tree = app.query_one("#tree")
@@ -24,7 +24,7 @@ async def test_tree_lists_entries(populated_vault):
 
 async def test_select_shows_masked_detail(populated_vault):
     v, key = populated_vault
-    app = TupacsApp(vault=v, key=key)
+    app = SekrtApp(vault=v, key=key)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         leaf = app.query_one("#tree").root.children[0].children[0]
@@ -42,7 +42,7 @@ async def test_select_shows_masked_detail(populated_vault):
 async def test_note_field_masked_by_default(vault):
     v, key = vault
     v.write(key, "wifi/office", new_entry("note", {"notes": "WPA2 s3cr3t-phrase"}))
-    app = TupacsApp(vault=v, key=key)
+    app = SekrtApp(vault=v, key=key)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         leaf = app.query_one("#tree").root.children[0].children[0]
@@ -56,7 +56,7 @@ async def test_note_field_masked_by_default(vault):
 
 async def test_unlock_screen_shown_when_locked(vault):
     v, _ = vault
-    app = TupacsApp(vault=v)  # no key provided, no session cache
+    app = SekrtApp(vault=v)  # no key provided, no session cache
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         assert app.screen.__class__.__name__ == "UnlockScreen"
@@ -64,7 +64,7 @@ async def test_unlock_screen_shown_when_locked(vault):
 
 async def test_search_filters_tree(populated_vault):
     v, key = populated_vault
-    app = TupacsApp(vault=v, key=key)
+    app = SekrtApp(vault=v, key=key)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         app.refresh_tree("bank")

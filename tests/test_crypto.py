@@ -1,7 +1,7 @@
 import pytest
 
-from tupacs import crypto
-from tupacs.crypto import DecryptionError, KdfParams
+from sekrt import crypto
+from sekrt.crypto import DecryptionError, KdfParams
 
 
 def test_kdf_params_roundtrip():

@@ -1,8 +1,8 @@
 # Regenerate: run quickstart.tape first (populates the demo vault), then
-# `vhs docs/vhs/tui.tape` (from repo root, with tupacs installed)
+# `vhs docs/vhs/tui.tape` (from repo root, with sekrt installed)
 Output docs/tui.gif
 
-Require tupacs
+Require sekrt
 
 Set Shell bash
 Set FontSize 18
@@ -12,16 +12,16 @@ Set Framerate 12
 Set Theme "Catppuccin Mocha"
 Set Padding 20
 
-Env TUPACS_VAULT "/tmp/tupacs-vhs-demo"
-Env TUPACS_PASSPHRASE "demo-passphrase-only"
+Env SEKRT_VAULT "/tmp/sekrt-vhs-demo"
+Env SEKRT_PASSPHRASE "demo-passphrase-only"
 
 Hide
-Type "tupacs unlock -t 5 && clear"
+Type "sekrt unlock -t 5 && clear"
 Enter
 Sleep 4s
 Show
 
-Type "tupacs"
+Type "sekrt"
 Enter
 Sleep 4s
 
