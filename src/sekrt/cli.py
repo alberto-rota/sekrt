@@ -10,7 +10,7 @@ from pathlib import Path
 
 import click
 
-from sekrt import __version__, clipboard, compat, envtools, gitsync, session, sshtools
+from sekrt import __version__, clipboard, compat, envtools, filetools, gitsync, session, sshtools
 from sekrt.clipboard import ClipboardError
 from sekrt.crypto import CryptoError, WrongPassphraseError
 from sekrt.generate import DEFAULT_LENGTH, generate_password, generate_token
@@ -23,7 +23,9 @@ from sekrt.vault import (
     primary_field,
 )
 
-SENSITIVE_FIELDS = {"password", "key", "secret", "token", "private", "content", "notes"}
+SENSITIVE_FIELDS = {
+    "password", "key", "secret", "token", "private", "content", "notes", "content_b64",
+}
 MASK = "********"
 
 # C0/C1 control characters minus \t and \n — entry data can originate from
@@ -284,6 +286,10 @@ def show(name: str, reveal: bool) -> None:
     click.secho(name, bold=True)
     click.echo(f"  type: {entry['type']}")
     for field, value in entry["data"].items():
+        if field == "content_b64":
+            size = entry["data"].get("size", "?")
+            click.echo(f"  content: ({size} bytes — use `sekrt file get {name}`)")
+            continue
         hidden = field in SENSITIVE_FIELDS and not reveal
         value = _printable(value)
         if "\n" in value:
@@ -326,25 +332,38 @@ def find(query: str) -> None:
 @click.argument("name")
 @friendly_errors
 def edit(name: str) -> None:
-    """Edit an entry's fields as JSON in $EDITOR."""
+    """Edit an entry's fields in $EDITOR.
+
+    A note's text is edited raw (multiline, no JSON escaping); every other
+    type is edited as its JSON field dict.
+    """
     vault = get_vault()
     if not vault.exists(name):
         raise click.ClickException(f"no entry named {name!r}{_suggest(vault, name)}")
     key = obtain_key(vault)
     entry = vault.read(key, name)
-    text = edit_text(json.dumps(entry["data"], indent=2) + "\n")
-    if text is None:
-        click.echo("no changes")
-        return
-    try:
-        data = json.loads(text)
-    except ValueError as exc:
-        raise click.ClickException(f"invalid JSON: {exc}") from exc
-    if not isinstance(data, dict) or not all(
-        isinstance(k, str) and isinstance(v, str) for k, v in data.items()
-    ):
-        raise click.ClickException("entry data must be a flat JSON object of strings")
-    entry["data"] = data
+
+    if entry["type"] == "note":
+        text = edit_text(entry["data"].get("notes", ""), suffix=".txt")
+        if text is None:
+            click.echo("no changes")
+            return
+        entry["data"]["notes"] = text
+    else:
+        text = edit_text(json.dumps(entry["data"], indent=2) + "\n")
+        if text is None:
+            click.echo("no changes")
+            return
+        try:
+            data = json.loads(text)
+        except ValueError as exc:
+            raise click.ClickException(f"invalid JSON: {exc}") from exc
+        if not isinstance(data, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in data.items()
+        ):
+            raise click.ClickException("entry data must be a flat JSON object of strings")
+        entry["data"] = data
+
     vault.write(key, name, entry, overwrite=True, message=f"edit {name}")
     click.secho(f"✔ updated {name}", fg="green")
 
@@ -600,6 +619,55 @@ def ssh_pub(name: str) -> None:
     if not public:
         raise click.ClickException(f"no public key stored for {name!r}")
     click.echo(public.strip())
+
+
+# --------------------------------------------------------------------------- file
+
+
+@main.group()
+def file() -> None:
+    """Store and restore whole files (binary-safe), encrypted."""
+
+
+@file.command("add")
+@click.argument("name")
+@click.argument("path", type=click.Path(path_type=Path, exists=True, dir_okay=False))
+@click.option("--force", "-f", is_flag=True, help="Overwrite an existing entry.")
+@friendly_errors
+def file_add(name: str, path: Path, force: bool) -> None:
+    """Encrypt a file of any kind into the vault.
+
+    \b
+      sekrt file add mfa/github-recovery ~/Downloads/recovery-codes.txt
+      sekrt file get mfa/github-recovery -o ./codes.txt
+    """
+    vault = get_vault()
+    key = obtain_key(vault)
+    entry_id = filetools.store(vault, key, name, path, force=force)
+    click.secho(f"✔ stored {entry_id} ({path.stat().st_size} bytes)", fg="green")
+
+
+@file.command("get")
+@click.argument("name")
+@click.option("--out", "-o", type=click.Path(path_type=Path), default=None,
+              help="Destination path (default: original filename, in the current directory).")
+@click.option("--force", "-f", is_flag=True, help="Overwrite an existing file.")
+@friendly_errors
+def file_get(name: str, out: Path | None, force: bool) -> None:
+    """Decrypt a stored file back to disk."""
+    vault = get_vault()
+    key = obtain_key(vault)
+    dest = filetools.restore(vault, key, name, out=out, force=force)
+    click.secho(f"✔ wrote {dest}", fg="green")
+
+
+@file.command("ls")
+@friendly_errors
+def file_ls() -> None:
+    """List stored files."""
+    vault = get_vault()
+    for name in vault.list_entries(f"{filetools.FILE_PREFIX}/"):
+        click.echo(name[len(filetools.FILE_PREFIX) + 1 :])
 
 
 # --------------------------------------------------------------------------- tui

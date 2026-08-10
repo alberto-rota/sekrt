@@ -30,6 +30,7 @@ private git remote (GitHub, GitLab, self-hosted — anything).
 - [Syncing with a git remote](#syncing-with-a-git-remote)
 - [The `.env` workflow](#the-env-workflow)
 - [SSH keys](#ssh-keys)
+- [Whole files](#whole-files)
 - [The TUI](#the-tui)
 - [CLI reference](#cli-reference)
 - [Security model](#security-model)
@@ -147,6 +148,22 @@ sekrt ssh pub deploy                            # print the public key for GitHu
 sekrt ssh restore deploy --dir ~/.ssh           # on a new machine: 0600/0644, done
 ```
 
+## Whole files
+
+For anything bigger than a note — a list of MFA recovery codes, a keystore,
+a PDF — `sekrt file` encrypts the file itself, byte-for-byte, no `$EDITOR`
+round-trip:
+
+```bash
+sekrt file add mfa/github-recovery ~/Downloads/recovery-codes.txt
+sekrt file get mfa/github-recovery                    # restores original filename, cwd
+sekrt file get mfa/github-recovery -o ./codes.txt      # or pick the destination
+sekrt file ls
+```
+
+Binary-safe (content is base64-encoded at rest), and `sekrt show` only
+prints its size — use `file get` to get the bytes back out.
+
 ## The TUI
 
 `sekrt` with no arguments (or `sekrt tui`) opens the interface: a folder
@@ -166,8 +183,9 @@ with a built-in password generator, and one-key sync.
 | `l` | lock the vault (prompts for the passphrase again) |
 | `q` | quit |
 
-`.env` and SSH entries show up in the tree read-only — add, restore and
-inspect those from the CLI (`sekrt env`, `sekrt ssh`) instead.
+`.env`, SSH and file entries show up in the tree read-only — add, restore
+and inspect those from the CLI (`sekrt env`, `sekrt ssh`, `sekrt file`)
+instead.
 
 ## CLI reference
 
@@ -178,12 +196,13 @@ sekrt get NAME [-c] [-f FIELD] print or copy a secret
 sekrt show NAME [--reveal]     show all fields
 sekrt ls [PREFIX]              list entries                (alias: list)
 sekrt find QUERY               search names                (alias: search)
-sekrt edit NAME                edit fields in $EDITOR
+sekrt edit NAME                edit fields in $EDITOR (notes: raw multiline text)
 sekrt mv OLD NEW               rename                      (alias: rename)
 sekrt rm NAME [-f]             delete                      (alias: remove)
 sekrt generate [LEN] [--token] generate without storing
 sekrt env push|pull|ls|show|rm .env files per repository    (guide: docs/env.md)
 sekrt ssh add|restore|ls|pub   SSH keypairs
+sekrt file add|get|ls          whole files, binary-safe
 sekrt remote URL               set the sync remote
 sekrt sync                     pull --rebase + push
 sekrt autosync on|off          push automatically on every change
