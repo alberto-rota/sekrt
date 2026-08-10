@@ -213,3 +213,59 @@ def test_no_vault_errors_cleanly(runner, tmp_path, monkeypatch):
     result = runner.invoke(main, ["ls"])
     assert result.exit_code != 0
     assert "sekrt init" in result.output
+
+
+def test_file_workflow(runner, vault_dir, tmp_path, monkeypatch):
+    invoke(runner, "init")
+    content = b"code-1\ncode-2\ncode-3\n"
+    src = tmp_path / "recovery-codes.txt"
+    src.write_bytes(content)
+
+    result = invoke(runner, "file", "add", "mfa/github", str(src))
+    assert result.exit_code == 0
+    assert "file/mfa/github" in result.output
+
+    assert invoke(runner, "file", "ls").output.strip() == "mfa/github"
+
+    shown = invoke(runner, "show", "file/mfa/github").output
+    assert "content_b64" not in shown
+    assert "use `sekrt file get" in shown
+
+    workdir = tmp_path / "elsewhere"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    result = invoke(runner, "file", "get", "mfa/github")
+    assert result.exit_code == 0
+    dest = workdir / "recovery-codes.txt"
+    assert dest.read_bytes() == content
+
+    result = runner.invoke(main, ["file", "get", "mfa/github"])
+    assert result.exit_code != 0  # refuses to overwrite without --force
+
+    out = tmp_path / "restored.txt"
+    result = invoke(runner, "file", "get", "mfa/github", "-o", str(out))
+    assert result.exit_code == 0
+    assert out.read_bytes() == content
+
+
+def test_edit_note_is_raw_multiline(runner, vault_dir, monkeypatch):
+    invoke(runner, "init")
+    invoke(runner, "add", "wifi/office", "-t", "note", "--notes", "line one")
+
+    seen = {}
+
+    def fake_edit_text(initial, *, suffix=".json"):
+        seen["initial"] = initial
+        seen["suffix"] = suffix
+        return "line one\nline two\nline three\n"
+
+    monkeypatch.setattr("sekrt.cli.edit_text", fake_edit_text)
+    result = invoke(runner, "edit", "wifi/office")
+    assert result.exit_code == 0
+
+    # the editor was handed the raw note text, not a JSON-escaped blob
+    assert seen["initial"] == "line one"
+    assert seen["suffix"] == ".txt"
+
+    shown = invoke(runner, "show", "wifi/office", "--reveal").output
+    assert "line one" in shown and "line two" in shown and "line three" in shown

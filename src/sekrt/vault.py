@@ -37,13 +37,14 @@ ENTRY_VERSION = 1
 # files (e.g. the git remote) can brute-force it offline.
 MIN_PASSPHRASE_LEN = 8
 
-TYPES = ("password", "api_key", "note", "env", "ssh")
+TYPES = ("password", "api_key", "note", "env", "ssh", "file")
 PRIMARY_FIELD = {
     "password": "password",
     "api_key": "key",
     "note": "notes",
     "env": "content",
     "ssh": "private",
+    "file": "content_b64",
 }
 
 _SEGMENT_RE = re.compile(r"^[\w.@+ -]+$", re.ASCII)

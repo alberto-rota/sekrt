@@ -6,6 +6,16 @@ project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [0.2.0] - unreleased
 
+### Added
+- `sekrt file add|get|ls`: encrypt and restore whole files of any kind
+  (binary-safe, base64-encoded at rest) — recovery-code lists, keystores,
+  PDFs, anything that isn't a `.env` or an SSH key.
+
+### Changed
+- `sekrt edit` on a note now opens its text raw in `$EDITOR` (no JSON
+  escaping), so multiline notes are as easy to edit as they already were
+  to create.
+
 ### Changed — the project is now called `sekrt` (was `tupacs`)
 
 Everything user-facing follows the name: the `sekrt` command, the `sekrt`
