@@ -6,6 +6,7 @@ import difflib
 import functools
 import json
 import re
+import shutil
 from pathlib import Path
 
 import click
@@ -69,7 +70,9 @@ def get_vault(must_exist: bool = True) -> Vault:
     vault = Vault()
     if must_exist and not vault.initialized:
         raise click.ClickException(
-            f"no vault found at {vault.path} — create one with `sekrt init`"
+            f"no vault found at {vault.path}\n"
+            "  new vault:                    sekrt init\n"
+            "  existing vault on a remote:   sekrt clone <url>"
             + compat.migration_hint()
         )
     return vault
@@ -116,14 +119,51 @@ def main(ctx: click.Context) -> None:
 # --------------------------------------------------------------------------- vault
 
 
+def _clone_into(vault: Vault, url: str) -> None:
+    """Populate *vault* from the existing vault repo at *url*."""
+    ok, msg = gitsync.clone(url, vault.path)
+    if not ok:
+        raise click.ClickException(msg)
+
+    if not vault.initialized:
+        # Cloned something, but it isn't a vault — don't leave the debris behind.
+        shutil.rmtree(vault.path, ignore_errors=True)
+        raise click.ClickException(
+            f"{url} does not look like a sekrt vault (no {vault.config_path.name})"
+        )
+
+    click.secho(f"✔ vault cloned to {vault.path}", fg="green")
+    entries = vault.list_entries()
+    click.echo(f"  {len(entries)} entr{'y' if len(entries) == 1 else 'ies'} available")
+    click.echo("  unlock with the passphrase that created this vault: `sekrt unlock`")
+
+
 @main.command()
 @click.option("--remote", "remote_url", default=None, help="Git remote URL for sync.")
 @friendly_errors
 def init(remote_url: str | None) -> None:
-    """Create a new vault (and its git repository)."""
+    """Create a new vault, or set this machine up from an existing one."""
     vault = get_vault(must_exist=False)
     if vault.initialized:
         raise click.ClickException(f"vault already exists at {vault.path}")
+    if remote_url and gitsync.remote_has_commits(remote_url):
+        raise click.ClickException(
+            f"{remote_url} already contains a vault — use `sekrt clone {remote_url}` instead.\n"
+            "  `init` would create a second vault with its own encryption salt, which could "
+            "never be merged with the existing one."
+        )
+
+    # The fork most people arrive at `init` needing: a second machine has to
+    # clone, because a fresh vault gets a fresh salt that can never decrypt the
+    # entries already on the remote. Only ask when there's a human to answer —
+    # scripts and CI keep the plain create-a-vault behaviour.
+    interactive = remote_url is None and click.get_text_stream("stdin").isatty()
+    if interactive and click.confirm(
+        "Do you already have a sekrt vault pushed to a git repo?", default=False
+    ):
+        _clone_into(vault, click.prompt("Vault repo URL").strip())
+        return
+
     phrase = compat.env("PASSPHRASE") or click.prompt(
         "Choose a vault passphrase", hide_input=True, confirmation_prompt=True
     )
@@ -135,6 +175,20 @@ def init(remote_url: str | None) -> None:
         click.echo(f"  remote set to {remote_url} — push with `sekrt sync`")
     else:
         click.echo("  connect a private GitHub repo with `sekrt remote <url>`")
+
+
+@main.command()
+@click.argument("url")
+@friendly_errors
+def clone(url: str) -> None:
+    """Set up this machine from an existing vault repo (e.g. a private GitHub repo)."""
+    vault = get_vault(must_exist=False)
+    if vault.initialized:
+        raise click.ClickException(
+            f"vault already exists at {vault.path} — "
+            f"move it aside first if you mean to replace it"
+        )
+    _clone_into(vault, url)
 
 
 @main.command()
@@ -421,6 +475,17 @@ def generate(length: int, no_symbols: bool, token: bool, copy_: bool) -> None:
 def remote(url: str) -> None:
     """Set the git remote used for sync (e.g. a private GitHub repo)."""
     vault = get_vault()
+    if gitsync.remote_has_commits(url) and not vault.list_entries():
+        # Empty local vault + populated remote: almost certainly a second machine
+        # that ran `init` by mistake. Pointing it at the remote guarantees an
+        # unmergeable sync later, so stop here while nothing is lost.
+        raise click.ClickException(
+            f"{url} already contains a vault, and this one is empty.\n"
+            "  Setting it as a remote would leave two vaults with different encryption "
+            "salts that can never be merged.\n"
+            f"  Adopt the existing vault instead:\n"
+            f"    rm -rf {vault.path} && sekrt clone {url}"
+        )
     gitsync.set_remote(vault.path, url)
     click.secho(f"✔ remote set to {url}", fg="green")
     click.echo("  run `sekrt sync` to push, `sekrt autosync on` to push automatically")

@@ -1,6 +1,6 @@
 [project]
 name = "sekrt"
-version = "0.2.0"
+version = "0.3.0"
 description = "A TUI + CLI secret manager for developers: passwords, API keys, SSH keys and .env files — encrypted locally, synced with git."
 readme = "README.md"
 license = "MIT"
