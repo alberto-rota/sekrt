@@ -3,7 +3,14 @@ import subprocess
 from sekrt.cli import main
 from sekrt.generate import generate_password
 
-from .conftest import PASSPHRASE, make_git_repo, requires_git
+from .conftest import PASSPHRASE, make_git_repo, make_pushed_vault, requires_git
+
+
+class _Tty:
+    """Stand-in for an interactive stdin, so `init` takes its prompting path."""
+
+    def isatty(self):
+        return True
 
 
 def invoke(runner, *args, **kwargs):
@@ -269,3 +276,85 @@ def test_edit_note_is_raw_multiline(runner, vault_dir, monkeypatch):
 
     shown = invoke(runner, "show", "wifi/office", "--reveal").output
     assert "line one" in shown and "line two" in shown and "line three" in shown
+
+
+@requires_git
+def test_clone_sets_up_a_second_machine(runner, tmp_path, monkeypatch):
+    """The new-machine path: one command, no manual git."""
+    bare, _, _ = make_pushed_vault(tmp_path, [("api/token", "s3cret")])
+
+    # Machine 2: `sekrt clone` and nothing else.
+    dest = tmp_path / "machine2"
+    monkeypatch.setenv("SEKRT_VAULT", str(dest))
+    result = runner.invoke(main, ["clone", bare])
+    assert result.exit_code == 0, result.output
+    assert "1 entry available" in result.output
+
+    listed = runner.invoke(main, ["ls"])
+    assert "api/token" in listed.output
+
+
+@requires_git
+def test_clone_rejects_a_repo_that_is_not_a_vault(runner, tmp_path, monkeypatch):
+    source = tmp_path / "not-a-vault"
+    source.mkdir()
+    (source / "README.md").write_text("hello")
+    subprocess.run(["git", "init", "-q", "-b", "main", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "add", "-A"], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(source), "-c", "user.email=t@t", "-c", "user.name=t",
+            "commit", "-qm", "init",
+        ],
+        check=True,
+    )
+
+    dest = tmp_path / "machine2"
+    monkeypatch.setenv("SEKRT_VAULT", str(dest))
+    result = runner.invoke(main, ["clone", str(source)])
+    assert result.exit_code != 0
+    assert "does not look like a sekrt vault" in result.output
+    assert not dest.exists()  # debris cleaned up
+
+
+@requires_git
+def test_init_refuses_a_remote_that_already_has_a_vault(runner, tmp_path, monkeypatch):
+    """The trap that caused the unmergeable rebase."""
+    bare, _, _ = make_pushed_vault(tmp_path)
+
+    monkeypatch.setenv("SEKRT_VAULT", str(tmp_path / "machine2"))
+    result = runner.invoke(main, ["init", "--remote", bare])
+    assert result.exit_code != 0
+    assert "already contains a vault" in result.output
+    assert "sekrt clone" in result.output
+    assert not (tmp_path / "machine2" / ".sekrt.json").exists()
+
+
+@requires_git
+def test_init_offers_to_clone_when_interactive(runner, tmp_path, monkeypatch):
+    """`init` on a second machine: answering yes clones instead of creating."""
+    bare, _, _ = make_pushed_vault(tmp_path, [("api/token", "s3cret")])
+    monkeypatch.setenv("SEKRT_VAULT", str(tmp_path / "machine2"))
+    monkeypatch.setattr("click.get_text_stream", lambda *_, **__: _Tty())
+
+    result = runner.invoke(main, ["init"], input=f"y\n{bare}\n")
+    assert result.exit_code == 0, result.output
+    assert "vault cloned" in result.output
+    assert "1 entry available" in result.output
+    assert "api/token" in runner.invoke(main, ["ls"]).output
+
+
+@requires_git
+def test_init_creates_when_user_says_no(runner, vault_dir, monkeypatch):
+    monkeypatch.setattr("click.get_text_stream", lambda *_, **__: _Tty())
+    result = runner.invoke(main, ["init"], input="n\n")
+    assert result.exit_code == 0, result.output
+    assert "vault created" in result.output
+
+
+def test_init_does_not_prompt_when_not_a_tty(runner, vault_dir):
+    """Scripts and CI must keep working without an interactive answer."""
+    result = invoke(runner, "init")
+    assert result.exit_code == 0
+    assert "vault created" in result.output
+    assert "already have" not in result.output

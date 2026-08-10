@@ -47,6 +47,27 @@ def runner():
     return CliRunner()
 
 
+def make_pushed_vault(tmp_path, entries=()):
+    """A bare 'remote' plus a vault that has pushed *entries* to it.
+
+    Stands in for "the other machine" in sync/clone tests. Returns
+    ``(bare_url, vault, key)``.
+    """
+    from sekrt import gitsync
+    from sekrt.vault import Vault, new_entry
+
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    v = Vault(tmp_path / "machine1")
+    key = v.create(PASSPHRASE)
+    gitsync.set_remote(v.path, str(bare))
+    for name, secret in entries:
+        v.write(key, name, new_entry("password", {"password": secret}))
+    ok, msg = gitsync.sync(v.path)
+    assert ok, msg
+    return str(bare), v, key
+
+
 def make_git_repo(path, origin=None):
     path.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-q", str(path)], check=True)

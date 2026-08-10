@@ -8,6 +8,7 @@ All functions degrade gracefully when git is missing.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import subprocess
 from pathlib import Path
@@ -27,6 +28,11 @@ def is_repo(path: Path) -> bool:
 def _run(path: Path, *args: str, extra: list[str] | None = None) -> subprocess.CompletedProcess:
     cmd = ["git", "-C", str(path), *(extra or []), *args]
     return subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+
+def _run_bare(*args: str) -> subprocess.CompletedProcess:
+    """Run git outside any repository (for clone / ls-remote)."""
+    return subprocess.run(["git", *args], capture_output=True, text=True, timeout=300)
 
 
 def _identity(path: Path) -> list[str]:
@@ -86,6 +92,57 @@ def set_remote(path: Path, url: str) -> None:
         _run(path, "remote", "set-url", "origin", url)
 
 
+def remote_has_commits(url: str) -> bool | None:
+    """Does *url* already contain a vault? None if the remote can't be reached.
+
+    Cheap pre-flight for `init`: an existing vault must be cloned, never
+    re-initialised, because a second `init` mints a fresh salt and a second
+    root commit that can never be reconciled with the first.
+    """
+    if not has_git():
+        return None
+    res = _run_bare("ls-remote", "--heads", url)
+    if res.returncode != 0:
+        return None
+    return bool(res.stdout.strip())
+
+
+def clone(url: str, path: Path) -> tuple[bool, str]:
+    """Clone an existing vault from *url* into *path*.
+
+    The vault directory holds secrets, so it is tightened to 0700 immediately
+    after git creates it with the ambient umask.
+    """
+    path = Path(path)
+    if not has_git():
+        return False, "git is not installed"
+    if path.exists() and any(path.iterdir()):
+        return False, f"{path} already exists and is not empty"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    res = _run_bare("clone", "-q", url, str(path))
+    if res.returncode != 0:
+        return False, f"clone failed: {_short(res.stderr)}"
+    with contextlib.suppress(OSError):
+        path.chmod(0o700)
+    return True, f"cloned {url}"
+
+
+def has_unrelated_history(path: Path, branch: str) -> bool:
+    """True if origin/*branch* shares no ancestor with HEAD.
+
+    This is the signature of a vault that was `init`-ed separately on two
+    machines: rebasing cannot fix it, and the two halves use different KDF
+    salts, so one side has to be discarded outright.
+    """
+    if _run(path, "rev-parse", "--verify", "-q", "HEAD").returncode != 0:
+        return False
+    fetch = _run(path, "fetch", "-q", "origin", branch)
+    if fetch.returncode != 0:
+        return False
+    return _run(path, "merge-base", "HEAD", "FETCH_HEAD").returncode != 0
+
+
 def push(path: Path) -> tuple[bool, str]:
     branch = current_branch(path)
     res = _run(path, "push", "-u", "origin", branch)
@@ -106,6 +163,16 @@ def sync(path: Path) -> tuple[bool, str]:
         return False, "no remote configured — run `sekrt remote <url>` first"
 
     branch = current_branch(path)
+    if has_unrelated_history(path, branch):
+        return False, (
+            f"this vault and {remote} were initialised separately — they share no history "
+            "and use different encryption salts, so they cannot be merged.\n"
+            "  The remote copy is the one whose entries are decryptable by the passphrase "
+            "that created it.\n"
+            f"  To adopt it, move this vault aside and clone instead:\n"
+            f"    mv {path} {path}.local-backup && sekrt clone {remote}"
+        )
+
     pull = _run(
         path, "pull", "--rebase", "--autostash", "origin", branch, extra=_identity(path)
     )

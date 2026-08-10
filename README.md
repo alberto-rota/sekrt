@@ -59,6 +59,9 @@ sekrt get work/github -c               # copy it (clipboard clears in 45s)
 sekrt                                  # open the TUI
 ```
 
+On a second machine, `init` asks whether you already have a vault in a git repo
+and clones it for you if so — or skip the question with `sekrt clone <url>`.
+
 That's a working local vault. `init` prompts you to choose (and confirm) a
 passphrase — that passphrase *is* the vault; there's no recovery if you
 lose it, so pick something you'll remember, and see the
@@ -91,13 +94,28 @@ sekrt remote git@github.com:you/secrets.git   # or: sekrt init --remote <url> on
 sekrt sync                                    # first push
 ```
 
-On another machine, point `$SEKRT_VAULT` at a fresh directory (or just run
-`sekrt init`, then `sekrt remote <url>` — `sync` will pull the rest):
+On every **other** machine, `sekrt init` asks the one question that matters and
+does the right thing with the answer:
 
-```bash
-sekrt remote git@github.com:you/secrets.git
-sekrt sync
+```console
+$ sekrt init
+Do you already have a sekrt vault pushed to a git repo? [y/N]: y
+Vault repo URL: git@github.com:you/secrets.git
+✔ vault cloned to ~/.local/share/sekrt
+  3 entries available
+  unlock with the passphrase that created this vault: `sekrt unlock`
 ```
+
+`sekrt clone <url>` does the same thing in one shot if you'd rather not be asked.
+
+> [!IMPORTANT]
+> A second machine must *clone* the vault, not create one. `init` generates a
+> new encryption salt and a new git root, so two independently-created vaults
+> share no history and cannot decrypt each other's entries. Cloning reuses the
+> existing salt, which is why your original passphrase keeps working. You don't
+> have to remember this: the prompt above steers you, `init --remote <url>` and
+> `remote <url>` refuse when the remote already holds a vault, and `sync`
+> refuses the impossible merge instead of corrupting anything.
 
 Every `add`/`edit`/`mv`/`rm` auto-commits locally; `sekrt sync` is what
 actually talks to the remote. Want every change pushed immediately instead?
@@ -190,7 +208,8 @@ instead.
 ## CLI reference
 
 ```text
-sekrt init [--remote URL]      create a vault
+sekrt init [--remote URL]      create a vault, or clone one if you have it already
+sekrt clone URL                set up from an existing vault repo, no questions asked
 sekrt add NAME [-u USER] [-g]  add password/api_key/note   (alias: insert)
 sekrt get NAME [-c] [-f FIELD] print or copy a secret
 sekrt show NAME [--reveal]     show all fields

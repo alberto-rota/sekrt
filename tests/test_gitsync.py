@@ -67,3 +67,72 @@ def test_autosync_pushes(vault, tmp_path):
         capture_output=True, text=True, check=True,
     ).stdout
     assert "auto/pushed.skr" in files
+
+
+def test_remote_has_commits(vault, tmp_path):
+    v, key = vault
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+
+    assert gitsync.remote_has_commits(str(bare)) is False
+    gitsync.set_remote(v.path, str(bare))
+    gitsync.sync(v.path)
+    assert gitsync.remote_has_commits(str(bare)) is True
+
+
+def test_remote_has_commits_unreachable():
+    assert gitsync.remote_has_commits("/nonexistent/nope.git") is None
+
+
+def test_clone_reproduces_the_vault(vault, tmp_path):
+    v, key = vault
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    gitsync.set_remote(v.path, str(bare))
+    v.write(key, "shared/entry", new_entry("password", {"password": "x"}))
+    assert gitsync.sync(v.path)[0]
+
+    dest = tmp_path / "machine2"
+    ok, msg = gitsync.clone(str(bare), dest)
+    assert ok, msg
+    assert (dest / ".sekrt.json").is_file()
+
+    # Same salt, so the original key still decrypts — the whole point of cloning.
+    from sekrt.vault import Vault
+    cloned = Vault(dest)
+    assert cloned.verify_key(key)
+    assert cloned.read(key, "shared/entry")["data"]["password"] == "x"
+    assert oct(dest.stat().st_mode)[-3:] == "700"
+
+
+def test_clone_refuses_nonempty_destination(tmp_path):
+    dest = tmp_path / "occupied"
+    dest.mkdir()
+    (dest / "something").write_text("x")
+    ok, msg = gitsync.clone("/nonexistent.git", dest)
+    assert not ok
+    assert "not empty" in msg
+
+
+def test_unrelated_history_is_detected(vault, tmp_path, monkeypatch):
+    """Two independent `init`s against one remote: the bug this all exists for."""
+    v, key = vault
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    gitsync.set_remote(v.path, str(bare))
+    v.write(key, "from/machine1", new_entry("password", {"password": "x"}))
+    assert gitsync.sync(v.path)[0]
+
+    # A second machine that ran `init` instead of `clone`.
+    from sekrt.vault import Vault
+    other = Vault(tmp_path / "machine2")
+    other.create("a different passphrase entirely")
+    gitsync.set_remote(other.path, str(bare))
+
+    assert gitsync.has_unrelated_history(other.path, "main")
+    ok, msg = gitsync.sync(other.path)
+    assert not ok
+    assert "initialised separately" in msg
+    assert "sekrt clone" in msg
+    # and it must not leave a rebase half-applied
+    assert not (other.path / ".git" / "rebase-merge").exists()
