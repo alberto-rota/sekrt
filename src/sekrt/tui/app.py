@@ -8,6 +8,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
+from textual.theme import Theme
 from textual.widgets import Button, Footer, Header, Input, Label, Select, Static, TextArea, Tree
 
 from sekrt import clipboard, gitsync, session
@@ -19,16 +20,95 @@ SENSITIVE_FIELDS = {"password", "key", "secret", "token", "private", "content", 
 MASK = "••••••••••"
 EDITABLE_TYPES = ("password", "api_key", "note")
 
+# brushed-metal palette: gray structure, red accent
+METAL = "#aaaaaa"
+RED = "#ff0000"
+STEEL = "#6e737a"
+BADGE = "🔴"
+
+METAL_THEME = Theme(
+    name="metal",
+    primary=METAL,
+    secondary=STEEL,
+    accent=RED,
+    error=RED,
+    warning="#d9a13b",
+    success="#8fbf7a",
+    foreground="#d7dade",
+    background="#0d0e10",
+    surface="#16181b",
+    panel="#1e2124",
+    dark=True,
+    variables={
+        "border": METAL,
+        "border-blurred": "#3a3e44",
+        "block-cursor-background": RED,
+        "block-cursor-foreground": "#0d0e10",
+        "block-cursor-text-style": "bold",
+        "footer-key-foreground": RED,
+        "footer-description-foreground": METAL,
+        "input-selection-background": f"{RED} 35%",
+        "input-cursor-background": RED,
+        "input-cursor-foreground": "#0d0e10",
+        "scrollbar": "#2a2e33",
+        "scrollbar-hover": STEEL,
+        "scrollbar-active": METAL,
+        "text-muted": STEEL,
+    },
+)
+
 WELCOME = (
-    "[dim]select an entry on the left — or press "
-    "[b]a[/b] to add, [b]/[/b] to filter, [b]s[/b] to sync[/dim]"
+    f"[{STEEL}]select an entry on the left — or press "
+    f"[b {RED}]a[/] to add, [b {RED}]/[/] to filter, [b {RED}]s[/] to sync[/]"
 )
 
 
-class UnlockScreen(ModalScreen[bytes]):
+def window_chrome_sequences(title: str, background: str | None) -> str:
+    """OSC escapes that retitle — and optionally recolor — the host window/tab.
+
+    ``background`` of ``None`` resets the window to the terminal's own color, so
+    every screen gets the look of a freshly opened tab rather than inheriting the
+    previous screen's.
+    """
+    seq = f"\x1b]0;{title}\x07"
+    seq += f"\x1b]11;{background}\x07" if background else "\x1b]111\x07"
+    return seq
+
+
+class WindowChrome:
+    """Mixin: a screen owns its host window's title and background.
+
+    Pushing a screen onto the current window should feel like opening a new tab,
+    so each screen claims the chrome when it resumes and hands it back to the
+    screen underneath when it goes away.
+    """
+
+    WINDOW_TITLE = "sekrt"
+    WINDOW_BACKGROUND: str | None = None
+
+    def window_title(self) -> str:
+        return self.WINDOW_TITLE
+
+    def apply_window_chrome(self) -> None:
+        app = self.app  # type: ignore[attr-defined]
+        if isinstance(app, SekrtApp):
+            app.set_window_chrome(self.window_title(), self.WINDOW_BACKGROUND)
+
+    def on_screen_resume(self) -> None:
+        self.apply_window_chrome()
+
+    def on_unmount(self) -> None:
+        app = self.app  # type: ignore[attr-defined]
+        stack = app.screen_stack if isinstance(app, SekrtApp) else []
+        if stack and stack[-1] is not self:
+            app.restore_window_chrome()
+
+
+class UnlockScreen(WindowChrome, ModalScreen[bytes]):
     """Passphrase prompt shown until the vault is unlocked."""
 
     BINDINGS = [Binding("escape", "give_up", "Quit")]
+    WINDOW_TITLE = "sekrt — locked"
 
     def __init__(self, vault: Vault) -> None:
         super().__init__()
@@ -36,7 +116,7 @@ class UnlockScreen(ModalScreen[bytes]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="unlock-box"):
-            yield Label("🔐 sekrt", id="unlock-title")
+            yield Label(f"{BADGE} sekrt", id="unlock-title")
             yield Label(f"{self.vault.path}", id="unlock-path")
             yield Input(password=True, placeholder="passphrase…", id="unlock-input")
             yield Static("", id="unlock-error")
@@ -46,7 +126,7 @@ class UnlockScreen(ModalScreen[bytes]):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.value:
-            self.query_one("#unlock-error", Static).update("[dim]unlocking…[/dim]")
+            self.query_one("#unlock-error", Static).update(f"[{STEEL}]unlocking…[/]")
             self._unlock(event.value)
 
     @work(thread=True)
@@ -55,7 +135,9 @@ class UnlockScreen(ModalScreen[bytes]):
             key = self.vault.unlock(phrase)
         except WrongPassphraseError:
             def fail() -> None:
-                self.query_one("#unlock-error", Static).update("[red]wrong passphrase[/red]")
+                self.query_one("#unlock-error", Static).update(
+                    f"[b {RED}]wrong passphrase[/]"
+                )
                 box = self.query_one("#unlock-input", Input)
                 box.value = ""
                 box.focus()
@@ -68,7 +150,7 @@ class UnlockScreen(ModalScreen[bytes]):
         self.app.exit()
 
 
-class EntryModal(ModalScreen["dict | None"]):
+class EntryModal(WindowChrome, ModalScreen["dict | None"]):
     """Add/edit form for password, api_key and note entries."""
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
@@ -87,6 +169,9 @@ class EntryModal(ModalScreen["dict | None"]):
         self._type = type_ if type_ in EDITABLE_TYPES else "password"
         self._data = data or {}
 
+    def window_title(self) -> str:
+        return f"sekrt — {self._title.lower()}"
+
     def compose(self) -> ComposeResult:
         d = self._data
         secret = d.get("password") or d.get("key") or ""
@@ -104,7 +189,7 @@ class EntryModal(ModalScreen["dict | None"]):
             yield Input(value=d.get("url", ""), placeholder="url (optional)", id="f-url")
             yield TextArea(d.get("notes", ""), id="f-notes")
             with Horizontal(classes="buttons"):
-                yield Button("🎲 Generate", id="btn-gen")
+                yield Button("Generate", id="btn-gen")
                 yield Button("Save", variant="primary", id="btn-save")
                 yield Button("Cancel", id="btn-cancel")
 
@@ -140,12 +225,14 @@ class EntryModal(ModalScreen["dict | None"]):
         self.dismiss(None)
 
 
-class ConfirmModal(ModalScreen[bool]):
+class ConfirmModal(WindowChrome, ModalScreen[bool]):
     BINDINGS = [
         Binding("y", "yes", "Yes"),
         Binding("n", "no", "No"),
         Binding("escape", "no", "No"),
     ]
+    WINDOW_TITLE = "sekrt — confirm"
+    WINDOW_BACKGROUND = "#1c0000"  # a destructive question deserves a red-lit window
 
     def __init__(self, message: str) -> None:
         super().__init__()
@@ -171,30 +258,65 @@ class ConfirmModal(ModalScreen[bool]):
 class SekrtApp(App[None]):
     TITLE = "sekrt"
     SUB_TITLE = "your secrets, encrypted & synced"
+    WINDOW_TITLE = "sekrt"
+    WINDOW_BACKGROUND = "#0d0e10"  # matches METAL_THEME's background
 
     CSS = """
-    #sidebar { width: 36; min-width: 24; border-right: tall $primary; }
-    #search { margin: 0 1; }
-    #tree { padding: 0 1; }
-    #detail-pane { padding: 1 2; }
+    Screen { background: $background; }
+
+    Header { background: $panel; color: $primary; text-style: bold; }
+    HeaderTitle { color: $primary; text-style: bold; }
+    Footer { background: $panel; }
+    FooterKey { background: $panel; }
+    FooterKey .footer-key--key { color: $accent; text-style: bold; }
+
+    #sidebar { width: 36; min-width: 24; background: $surface; border-right: solid $primary 40%; }
+    #search { margin: 0 1; background: $panel; border: tall $panel; color: $foreground; }
+    #search:focus { border: tall $accent; }
+    #tree { padding: 0 1; background: $surface; }
+    #tree > .tree--cursor { background: $accent; color: $background; text-style: bold; }
+    #tree > .tree--highlight-line { background: $boost; }
+    #tree > .tree--guides { color: #2a2e33; }
+    #tree > .tree--guides-selected { color: $accent; }
+    #detail-pane { padding: 1 2; background: $background; }
 
     UnlockScreen, EntryModal, ConfirmModal { align: center middle; }
     #unlock-box { width: 60; height: auto; border: round $primary; padding: 1 2;
                   background: $surface; }
-    #unlock-title { width: 100%; text-align: center; text-style: bold; }
+    #unlock-title { width: 100%; text-align: center; text-style: bold; color: $primary; }
     #unlock-path { width: 100%; text-align: center; color: $text-muted; margin-bottom: 1; }
     #unlock-error { height: 1; margin-top: 1; }
+    #unlock-input { background: $panel; border: tall $panel; }
+    #unlock-input:focus { border: tall $accent; }
 
     #entry-box { width: 72; height: auto; border: round $primary; padding: 1 2;
                  background: $surface; }
-    #entry-title { text-style: bold; margin-bottom: 1; }
-    #entry-box Input, #entry-box Select { margin-bottom: 1; }
-    #f-notes { height: 4; margin-bottom: 1; }
+    #entry-title { text-style: bold; color: $primary; margin-bottom: 1; }
+    #entry-box Input { margin-bottom: 1; background: $panel; border: tall $panel; }
+    #entry-box Input:focus { border: tall $accent; }
+    #entry-box Select { margin-bottom: 1; }
+    #entry-box Select SelectCurrent { background: $panel; border: tall $panel; }
+    #entry-box Select:focus SelectCurrent { border: tall $accent; }
+    SelectOverlay { background: $panel; border: round $primary; }
+    SelectOverlay > .option-list--option-highlighted { background: $accent;
+                                                       color: $background; text-style: bold; }
+    #f-notes { height: 4; margin-bottom: 1; background: $panel; border: tall $panel; }
+    #f-notes:focus { border: tall $accent; }
 
-    #confirm-box { width: 56; height: auto; border: round $warning; padding: 1 2;
+    #confirm-box { width: 56; height: auto; border: round $accent; padding: 1 2;
                    background: $surface; }
+    #confirm-box .buttons { margin-top: 1; }
+    Toast { background: $panel; color: $foreground; border-left: outer $primary; }
+    Toast.-error { border-left: outer $accent; }
+
     .buttons { height: auto; align-horizontal: right; }
-    .buttons Button { margin-left: 2; }
+    .buttons Button { margin-left: 2; border: none; min-width: 12;
+                      background: $panel; color: $primary; }
+    .buttons Button:hover { background: $primary; color: $background; }
+    .buttons Button.-primary, .buttons Button.-error { background: $accent;
+                                                       color: $background; text-style: bold; }
+    .buttons Button.-primary:hover, .buttons Button.-error:hover { background: $primary;
+                                                                   color: $background; }
     """
 
     BINDINGS = [
@@ -219,6 +341,26 @@ class SekrtApp(App[None]):
         self.revealed = False
         self.detail_markup = WELCOME  # mirrors the #detail Static, handy for tests
         self._editing_name: str | None = None  # entry being edited, None while adding
+        # (title, background) currently claimed by the host window — mirrored for tests
+        self.window_chrome: tuple[str, str | None] = (self.WINDOW_TITLE, None)
+
+    # -- window chrome -------------------------------------------------------
+
+    def window_title(self) -> str:
+        return f"{self.WINDOW_TITLE} — {self.vault.path.name}"
+
+    def set_window_chrome(self, title: str, background: str | None = None) -> None:
+        """Retitle and recolor the host terminal window (or tab)."""
+        self.window_chrome = (title, background)
+        driver = self._driver
+        if driver is None or self.is_headless:
+            return
+        driver.write(window_chrome_sequences(title, background))
+        driver.flush()
+
+    def restore_window_chrome(self) -> None:
+        """Hand the window back to the main screen, e.g. after a modal closes."""
+        self.set_window_chrome(self.window_title(), self.WINDOW_BACKGROUND)
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -227,11 +369,14 @@ class SekrtApp(App[None]):
         with Horizontal():
             with Vertical(id="sidebar"):
                 yield Input(placeholder="filter…  ( / )", id="search")
-                yield Tree("🔐 vault", id="tree")
+                yield Tree(f"{BADGE} vault", id="tree")
             yield VerticalScroll(Static(WELCOME, id="detail"), id="detail-pane")
         yield Footer()
 
     def on_mount(self) -> None:
+        self.register_theme(METAL_THEME)
+        self.theme = "metal"
+        self.restore_window_chrome()
         if self.key is None:
             cached = session.load_key(self.vault.path)
             if cached is not None and self.vault.verify_key(cached):
@@ -241,6 +386,14 @@ class SekrtApp(App[None]):
         else:
             self.refresh_tree()
             self.query_one("#tree", Tree).focus()
+
+    def on_unmount(self) -> None:
+        """Give the terminal its own title and colors back on the way out."""
+        driver = self._driver
+        if driver is None or self.is_headless:
+            return
+        driver.write("\x1b]0;\x07\x1b]111\x07")
+        driver.flush()
 
     def _on_unlocked(self, key: bytes | None) -> None:
         if key is None:
@@ -274,9 +427,10 @@ class SekrtApp(App[None]):
         tree.root.expand_all()
         if not names:
             self.show_detail_message(
-                "[dim]vault is empty — press [b]a[/b] to add your first entry[/dim]"
+                f"[{STEEL}]vault is empty — press [b {RED}]a[/] "
+                f"[{STEEL}]to add your first entry[/]"
                 if not filter_text
-                else "[dim]no entries match the filter[/dim]"
+                else f"[{STEEL}]no entries match the filter[/]"
             )
 
     def show_detail_message(self, markup: str) -> None:
@@ -302,19 +456,28 @@ class SekrtApp(App[None]):
         if self.current is None or self.current_entry is None:
             return
         entry = self.current_entry
-        lines = [f"[b]{escape(self.current)}[/b]  [dim]({escape(entry['type'])})[/dim]", ""]
+        lines = [
+            f"[b {METAL}]{escape(self.current)}[/]  [{STEEL}]({escape(entry['type'])})[/]",
+            f"[{STEEL}]{'─' * 40}[/]",
+        ]
         for field, value in entry["data"].items():
             hidden = field in SENSITIVE_FIELDS and not self.revealed
-            label = f"[b cyan]{escape(field)}[/b cyan]"
+            label = f"[b {RED}]{escape(field)}[/]"
             if "\n" in value:
                 if hidden:
-                    lines.append(f"{label}: [dim]({len(value.splitlines())} lines — press r)[/dim]")
+                    lines.append(
+                        f"{label}: [{STEEL}]({len(value.splitlines())} lines — press r)[/]"
+                    )
                 else:
                     lines.append(f"{label}:")
                     lines.extend("  " + escape(line) for line in value.splitlines())
             else:
                 lines.append(f"{label}: {MASK if hidden else escape(value)}")
-        lines += ["", "[dim]c copy · r reveal · e edit · d delete[/dim]"]
+        keys = f" [{STEEL}]·[/] ".join(
+            f"[b {RED}]{k}[/] [{METAL}]{d}[/]"
+            for k, d in (("c", "copy"), ("r", "reveal"), ("e", "edit"), ("d", "delete"))
+        )
+        lines += ["", keys]
         self.detail_markup = "\n".join(lines)
         self.query_one("#detail", Static).update(self.detail_markup)
 

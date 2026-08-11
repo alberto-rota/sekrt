@@ -122,10 +122,12 @@ git -C "$scratch" add -A
 git -C "$scratch" -c commit.gpgsign=false commit -qm "Initial commit"
 
 # --- the vault -----------------------------------------------------------
-# SEKRT_PASSPHRASE makes init non-interactive; the vault lands in the fake
-# HOME's default location so nothing in the demo references a /tmp path.
+# SEKRT_PASSPHRASE skips the passphrase prompt; `</dev/null` skips the
+# "already have a vault pushed to a git repo?" fork, which `init` only asks on a
+# tty — and under VHS this script *is* on one. The vault lands in the fake HOME's
+# default location so nothing in the demo references a /tmp path.
 export SEKRT_PASSPHRASE="${SEKRT_PASSPHRASE:-demo-passphrase-only}"
-sekrt init >/dev/null
+sekrt init </dev/null >/dev/null
 sekrt add work/github -u alberto -g >/dev/null   # so `ls` isn't env-only
 
 echo "demo home ready: $DEMO_HOME"

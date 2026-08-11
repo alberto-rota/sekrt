@@ -1,6 +1,6 @@
 import pytest
 
-from sekrt.tui.app import SekrtApp
+from sekrt.tui.app import ConfirmModal, SekrtApp, window_chrome_sequences
 from sekrt.vault import new_entry
 
 
@@ -60,6 +60,42 @@ async def test_unlock_screen_shown_when_locked(vault):
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         assert app.screen.__class__.__name__ == "UnlockScreen"
+
+
+async def test_window_chrome_follows_the_active_screen(populated_vault):
+    """Each screen retitles (and recolours) the window like a freshly opened tab."""
+    v, key = populated_vault
+    app = SekrtApp(vault=v, key=key)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        main = app.window_chrome
+        assert main == (f"sekrt — {v.path.name}", SekrtApp.WINDOW_BACKGROUND)
+
+        await pilot.press("a")  # add entry
+        await pilot.pause()
+        assert app.window_chrome == ("sekrt — new entry", None)
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.window_chrome == main
+
+        leaf = app.query_one("#tree").root.children[0].children[0]
+        app.query_one("#tree").select_node(leaf)
+        await pilot.pause()
+        await pilot.press("d")  # delete confirmation
+        await pilot.pause()
+        title, background = app.window_chrome
+        assert title == "sekrt — confirm"
+        assert background == ConfirmModal.WINDOW_BACKGROUND
+
+        await pilot.press("n")
+        await pilot.pause()
+        assert app.window_chrome == main
+
+
+def test_window_chrome_sequences_reset_background_when_unset():
+    assert window_chrome_sequences("sekrt", "#1c0000") == "\x1b]0;sekrt\x07\x1b]11;#1c0000\x07"
+    assert window_chrome_sequences("sekrt", None) == "\x1b]0;sekrt\x07\x1b]111\x07"
 
 
 async def test_search_filters_tree(populated_vault):
