@@ -60,7 +60,7 @@ Sleep 1s
 Show
 
 # What a command would get, without running it: names and sources, no values.
-Type "sekrt run -n -- npm start"
+Type "sekrt run -n 'npm start'"
 Enter
 Sleep 5s
 
@@ -70,7 +70,7 @@ Enter
 Sleep 4s
 
 # Single quotes: the shell sekrt starts is what expands the reference.
-Type `sekrt run -c 'echo publishing with $UV_PUBLISH_TOKEN'`
+Type `sekrt run 'echo publishing with $UV_PUBLISH_TOKEN'`
 Enter
 Sleep 4s
 

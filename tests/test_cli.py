@@ -612,7 +612,18 @@ def test_run_can_be_told_which_entry_a_variable_comes_from(runner, token_vault, 
     assert fake_launch[0]["env"]["GH"] == "hunter2"
 
 
-def test_run_with_c_resolves_what_the_command_refers_to_and_hands_it_to_a_shell(
+def test_run_hands_a_quoted_command_to_a_shell_without_being_asked(
+    runner, token_vault, fake_launch, monkeypatch
+):
+    monkeypatch.setenv("SHELL", "/bin/sh")
+    command = 'service log --token="$MY_TOKEN"'
+    result = invoke(runner, "run", "--no-env-files", command)
+    assert result.exit_code == 0
+    assert fake_launch[0]["argv"] == ["/bin/sh", "-c", command]
+    assert fake_launch[0]["env"]["MY_TOKEN"] == "t0ps3cret"
+
+
+def test_run_with_c_still_hands_the_string_to_a_shell(
     runner, token_vault, fake_launch, monkeypatch
 ):
     monkeypatch.setenv("SHELL", "/bin/sh")
@@ -620,14 +631,30 @@ def test_run_with_c_resolves_what_the_command_refers_to_and_hands_it_to_a_shell(
     result = invoke(runner, "run", "--no-env-files", "-c", command)
     assert result.exit_code == 0
     assert fake_launch[0]["argv"] == ["/bin/sh", "-c", command]
+
+
+def test_run_execs_a_bare_program_name_with_no_shell_in_the_way(
+    runner, token_vault, fake_launch
+):
+    result = invoke(runner, "run", "-e", "MY_TOKEN", "--no-env-files", "service")
+    assert result.exit_code == 0
+    assert fake_launch[0]["argv"] == ["service"]
     assert fake_launch[0]["env"]["MY_TOKEN"] == "t0ps3cret"
+
+
+def test_run_says_nothing_about_an_ordinary_quoted_command(
+    runner, token_vault, fake_launch
+):
+    result = invoke(runner, "run", "-e", "MY_TOKEN", "--no-env-files", "npm start")
+    assert result.exit_code == 0
+    assert result.stderr == ""
 
 
 def test_run_notices_when_the_calling_shell_already_ate_the_reference(
     runner, token_vault, fake_launch
 ):
-    """`-c "echo $MY_TOKEN"` in double quotes arrives as `echo ` — say so."""
-    result = invoke(runner, "run", "-e", "MY_TOKEN", "--no-env-files", "-c", "echo ")
+    """`sekrt run "echo $MY_TOKEN"` in double quotes arrives as `echo ` — say so."""
+    result = invoke(runner, "run", "-e", "MY_TOKEN", "--no-env-files", "echo ")
     assert result.exit_code == 0
     assert "double quotes" in result.stderr
     assert "Single-quote it" in result.stderr
@@ -636,13 +663,13 @@ def test_run_notices_when_the_calling_shell_already_ate_the_reference(
 def test_run_says_nothing_when_the_reference_survived_the_quoting(
     runner, token_vault, fake_launch
 ):
-    result = invoke(runner, "run", "--no-env-files", "-c", "echo $MY_TOKEN")
+    result = invoke(runner, "run", "--no-env-files", "echo $MY_TOKEN")
     assert result.exit_code == 0
     assert "double quotes" not in result.stderr
 
 
-def test_a_c_string_with_its_own_dollars_is_left_alone(runner, token_vault, fake_launch):
-    result = invoke(runner, "run", "-e", "MY_TOKEN", "--no-env-files", "-c", "echo $$")
+def test_a_command_with_its_own_dollars_is_left_alone(runner, token_vault, fake_launch):
+    result = invoke(runner, "run", "-e", "MY_TOKEN", "--no-env-files", "echo $$")
     assert result.exit_code == 0
     assert "double quotes" not in result.stderr  # a `$` of some kind is still there
 
@@ -650,7 +677,7 @@ def test_a_c_string_with_its_own_dollars_is_left_alone(runner, token_vault, fake
 def test_run_notes_a_reference_the_vault_cannot_answer_but_still_runs(
     runner, token_vault, fake_launch
 ):
-    result = invoke(runner, "run", "-e", "MY_TOKEN", "--no-env-files", "-c", "svc $MY_TOKN")
+    result = invoke(runner, "run", "-e", "MY_TOKEN", "--no-env-files", "svc $MY_TOKN")
     assert result.exit_code == 0  # the shell may well have its own $MY_TOKN
     assert "MY_TOKN" in result.stderr
     assert "MY_TOKEN" in result.stderr  # ...and the typo is spelled out for you
@@ -665,7 +692,7 @@ def test_run_warns_when_a_quoted_reference_reached_the_command_as_text(
     )
     assert result.exit_code == 0
     assert "reached the command as text" in result.stderr
-    assert "sekrt run -c" in result.stderr
+    assert "sekrt run '… $MY_TOKEN …'" in result.stderr
     assert "t0ps3cret" not in result.stderr  # the warning never repeats the secret
 
 
@@ -820,7 +847,7 @@ def test_shell_opens_a_subshell_holding_the_secrets(
     assert "t0ps3cret" not in result.stderr
     # the prompt wiring rides along in the environment, and is announced
     assert Path(fake_launch[0]["env"]["ZDOTDIR"]).joinpath(".zshrc").is_file()
-    assert "🔓" in result.stderr
+    assert "(sekrt)" in result.stderr
 
 
 def test_shell_dry_run_shows_the_bare_shell_and_writes_nothing(

@@ -7,9 +7,10 @@ the shell's environment for the rest of the session, inherited by everything
 started from it, with nothing to say when it should stop. So the exposure goes
 the other way round: sekrt keeps the secrets and *wraps* the command.
 
-    sekrt run -- service log                      # secrets in its environment
-    sekrt run -c 'service log --token="$MY_TOKEN"'  # a shell expands them
-    sekrt shell                                   # a subshell; `exit` revokes
+    sekrt run 'service log'                        # secrets in its environment
+    sekrt run 'service log --token="$MY_TOKEN"'    # ...a shell expands them
+    sekrt run -- service log --flag-of-its-own     # ...an argv, run directly
+    sekrt shell                                    # a subshell; `exit` revokes
 
 The child's environment is the only place a value is written. Nothing touches
 the disk, nothing is left in the calling shell, and when the process ends the
@@ -311,6 +312,46 @@ def child_env(
     return env
 
 
+# The characters that mean a single argument was written for a shell to read
+# rather than for a program to be called by name: whitespace, expansion, quoting,
+# redirection, globbing. A lone `npm` has none of them and is simply exec'd.
+_SHELL_CHARS = frozenset(" \t\n$|&;<>()`*?\"'\\")
+
+
+def needs_shell(command: tuple[str, ...] | list[str]) -> bool:
+    """Is *command* one string a shell should interpret, rather than an argv?
+
+    ``sekrt run 'service log --token="$MY_TOKEN"'`` is a sentence in shell, not a
+    program and its arguments — one word holding spaces, a `$` and quotes, none
+    of which mean anything to :func:`os.execvpe`. ``sekrt run -- npm start`` is
+    the other shape and stays exec'd directly, with no shell in the way.
+    """
+    return len(command) == 1 and any(char in _SHELL_CHARS for char in command[0])
+
+
+def swallowed_text(command: str) -> bool:
+    """Does *command* carry the hole an eaten ``$VAR`` reference leaves behind?
+
+    ``sekrt run "echo $MY_TOKEN"`` — double quotes — is expanded by the shell that
+    runs sekrt, before sekrt exists; unset there, what arrives is ``echo ``, and
+    the command prints nothing at all. Nothing in the string can prove that is
+    what happened, but the shapes it leaves — a trailing space, a gap of two, an
+    argument ending in ``=``, an empty pair of quotes — are not shapes a command
+    written by hand usually has, and a silently empty value is the worst way to
+    find out. A reference that survived (any ``$`` at all) is left alone.
+    """
+    if "$" in command:
+        return False
+    body = command.rstrip()
+    return (
+        (bool(command) and body != command)
+        or "  " in body
+        or '""' in body
+        or "''" in body
+        or any(word.endswith("=") for word in body.split())
+    )
+
+
 def swallowed_args(command: tuple[str, ...] | list[str]) -> list[str]:
     """Arguments shaped like a variable the *calling* shell expanded away.
 
@@ -342,7 +383,7 @@ def might_expose(vault: Vault) -> bool:
 def is_shell_command(argv: tuple[str, ...] | list[str]) -> bool:
     """Is *argv* a shell being handed a command to interpret?
 
-    ``sekrt run -- sh -c '… $MY_TOKEN …'`` is the long way round to ``run -c``,
+    ``sekrt run -- sh -c '… $MY_TOKEN …'`` is the long way round to the quoted form,
     and it works: that shell expands the reference itself. Worth telling apart
     from a program being handed the same text, which does not.
     """
@@ -358,43 +399,46 @@ def default_shell() -> str:
     return os.environ.get("COMSPEC") or "cmd.exe"
 
 
-# --------------------------------------------------------------------- the badge
+# ----------------------------------------------------------------------- the tag
 
-# A shell holding secrets should not look like an ordinary one.
-SHELL_BADGE = "🔓"
-_BADGE = "@SEKRT_BADGE@"  # placeholder in the templates below
+# A shell holding secrets should not look like an ordinary one. Plain ASCII, in
+# the shape `(venv)`/`(nix-shell)` already taught everyone to read: an emoji here
+# would be two display cells the shell counts as one character, which is how a
+# prompt ends up misplacing the cursor on a long edited line.
+SHELL_TAG = "(sekrt)"
+_TAG = "@SEKRT_TAG@"  # placeholder in the templates below
 
 _HEADER = "# Written by `sekrt shell` — prompt wiring, no secrets. Safe to delete.\n"
 
 # zsh resolves each startup file against whatever ZDOTDIR holds when it gets
 # there, so .zshenv must *not* put the real one back: .zshrc, the file that adds
-# the badge, would stop being ours.
+# the tag, would stop being ours.
 _ZSHENV = _HEADER + """\
 [ -f "${SEKRT_ZDOTDIR:-$HOME}/.zshenv" ] && . "${SEKRT_ZDOTDIR:-$HOME}/.zshenv"
 """
 
 # A precmd hook rather than one assignment: a themed prompt rebuilds PROMPT
 # before every line and would drop a prefix set only once. The guard is what
-# keeps it from stacking up one badge per prompt.
+# keeps it from stacking up one tag per prompt.
 _ZSHRC = _HEADER + """\
 if [ -n "${SEKRT_ZDOTDIR-}" ]; then ZDOTDIR="$SEKRT_ZDOTDIR"; else unset ZDOTDIR; fi
 [ -f "${ZDOTDIR:-$HOME}/.zshrc" ] && . "${ZDOTDIR:-$HOME}/.zshrc"
-_sekrt_badge() {
-    case "$PROMPT" in "@SEKRT_BADGE@ "*) ;; *) PROMPT="@SEKRT_BADGE@ $PROMPT" ;; esac
+_sekrt_tag() {
+    case "$PROMPT" in "@SEKRT_TAG@ "*) ;; *) PROMPT="@SEKRT_TAG@ $PROMPT" ;; esac
 }
-precmd_functions+=(_sekrt_badge)
+precmd_functions+=(_sekrt_tag)
 """
 
 _BASHRC = _HEADER + """\
 [ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"
-_sekrt_badge() {
-    case "$PS1" in "@SEKRT_BADGE@ "*) ;; *) PS1="@SEKRT_BADGE@ $PS1" ;; esac
+_sekrt_tag() {
+    case "$PS1" in "@SEKRT_TAG@ "*) ;; *) PS1="@SEKRT_TAG@ $PS1" ;; esac
 }
 # Appended, so a prompt framework already using PROMPT_COMMAND keeps working —
 # including bash 5.1's array form, which a plain assignment would flatten.
 case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in
-    "declare -a"*) PROMPT_COMMAND+=(_sekrt_badge) ;;
-    *) PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }_sekrt_badge" ;;
+    "declare -a"*) PROMPT_COMMAND+=(_sekrt_tag) ;;
+    *) PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }_sekrt_tag" ;;
 esac
 """
 
@@ -402,7 +446,7 @@ esac
 # where the real fish_prompt can be wrapped.
 _FISH_INIT = (
     "functions -q fish_prompt; and functions -c fish_prompt _sekrt_inner_prompt; "
-    "and function fish_prompt; echo -n '@SEKRT_BADGE@ '; _sekrt_inner_prompt; end"
+    "and function fish_prompt; echo -n '@SEKRT_TAG@ '; _sekrt_inner_prompt; end"
 )
 
 
@@ -426,12 +470,12 @@ def _rc_dir() -> Path | None:
 
 
 def _write_rc(path: Path, template: str) -> Path:
-    _atomic_write(path, template.replace(_BADGE, SHELL_BADGE).encode())  # 0600
+    _atomic_write(path, template.replace(_TAG, SHELL_TAG).encode())  # 0600
     return path
 
 
 def shell_launch(shell: str | None = None) -> tuple[list[str], dict[str, str]]:
-    """The argv and extra environment that open a subshell wearing the badge.
+    """The argv and extra environment that open a subshell wearing the tag.
 
     `PS1` handed over in the environment does not survive: the `.bashrc` or
     `.zshrc` that runs next sets its own. So the prompt is hooked through the
@@ -443,7 +487,7 @@ def shell_launch(shell: str | None = None) -> tuple[list[str], dict[str, str]]:
     name = Path(shell).name.removesuffix(".exe")
 
     if name == "fish":
-        return [shell, "-C", _FISH_INIT.replace(_BADGE, SHELL_BADGE)], {}
+        return [shell, "-C", _FISH_INIT.replace(_TAG, SHELL_TAG)], {}
 
     directory = _rc_dir() if name in ("bash", "zsh") else None
     if directory is None:

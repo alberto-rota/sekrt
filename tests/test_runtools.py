@@ -267,6 +267,41 @@ def test_shell_argv_runs_the_users_shell(monkeypatch):
 @pytest.mark.parametrize(
     "command, expected",
     [
+        (["service log"], True),  # one string, written for a shell
+        (['svc --token="$TOKEN"'], True),
+        (["cat a.txt | wc -l"], True),
+        (["make"], False),  # a program to call by name
+        (["./build.sh"], False),
+        (["service", "log"], False),  # an argv, however it was quoted
+        (["sh", "-c", "echo $X"], False),
+        ([], False),
+    ],
+)
+def test_a_command_meant_for_a_shell_is_told_from_an_argv(command, expected):
+    assert runtools.needs_shell(command) is expected
+
+
+@pytest.mark.parametrize(
+    "command, expected",
+    [
+        ("echo ", True),  # `"echo $X"` with X unset outside
+        ("svc --token=", True),
+        ("svc --token= start", True),
+        ('svc --token=""', True),
+        ("svc  start", True),  # `svc "$X" start`
+        ("npm start", False),  # an ordinary command, nothing missing
+        ("echo $X", False),  # the reference survived
+        ("echo $$", False),
+        ("", False),
+    ],
+)
+def test_a_reference_the_calling_shell_ate_leaves_a_recognisable_hole(command, expected):
+    assert runtools.swallowed_text(command) is expected
+
+
+@pytest.mark.parametrize(
+    "command, expected",
+    [
         (["svc", "--token="], ["--token="]),  # `--token=$X` with X unset outside
         (["echo", ""], [""]),  # `"$X"`, double-quoted
         (["svc", "--a=1", "--b="], ["--b="]),
@@ -295,7 +330,7 @@ def test_a_shell_being_handed_a_command_is_recognised(argv, expected):
     assert runtools.is_shell_command(argv) is expected
 
 
-# --------------------------------------------------------------------- the badge
+# ----------------------------------------------------------------------- the tag
 
 
 def test_an_unknown_shell_opens_plain():
@@ -309,7 +344,7 @@ def test_zsh_is_pointed_at_a_generated_zdotdir():
     assert argv == ["/bin/zsh", "-i"]
     rc_dir = Path(wiring["ZDOTDIR"])
     assert (rc_dir / ".zshenv").is_file()
-    assert runtools.SHELL_BADGE in (rc_dir / ".zshrc").read_text()
+    assert runtools.SHELL_TAG in (rc_dir / ".zshrc").read_text()
     for name in (".zshenv", ".zshrc"):
         assert (rc_dir / name).stat().st_mode & 0o777 == 0o600  # sourced: must be ours alone
 
@@ -329,14 +364,14 @@ def test_zdotdir_is_not_invented_when_there_was_none(monkeypatch):
 def test_bash_is_started_against_a_generated_rcfile():
     argv, wiring = runtools.shell_launch("/bin/bash")
     assert argv[0] == "/bin/bash" and argv[1] == "--rcfile" and "-i" in argv
-    assert runtools.SHELL_BADGE in Path(argv[2]).read_text()
+    assert runtools.SHELL_TAG in Path(argv[2]).read_text()
     assert wiring == {}
 
 
 def test_fish_takes_the_instruction_on_its_command_line():
     argv, _ = runtools.shell_launch("/opt/homebrew/bin/fish")
     assert argv[:2] == ["/opt/homebrew/bin/fish", "-C"]
-    assert runtools.SHELL_BADGE in argv[2] and "fish_prompt" in argv[2]
+    assert runtools.SHELL_TAG in argv[2] and "fish_prompt" in argv[2]
 
 
 def test_plain_shell_when_there_is_no_private_directory(monkeypatch):
@@ -345,15 +380,15 @@ def test_plain_shell_when_there_is_no_private_directory(monkeypatch):
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not installed")
-def test_bash_really_ends_up_with_a_badged_prompt(tmp_path):
-    """The generated rc, run by the real bash: PS1 gets the badge, once."""
+def test_bash_really_ends_up_with_a_tagged_prompt(tmp_path):
+    """The generated rc, run by the real bash: PS1 gets the tag, once."""
     home = tmp_path / "home"
     home.mkdir()
     (home / ".bashrc").write_text(r'PS1="\w \$ "' + "\nexport CAME_FROM_BASHRC=1\n")
     argv, _ = runtools.shell_launch(shutil.which("bash"))
 
     # PROMPT_COMMAND is what bash runs before drawing a prompt; run it twice to
-    # prove the badge does not stack up.
+    # prove the tag does not stack up.
     probe = 'eval "$PROMPT_COMMAND"; eval "$PROMPT_COMMAND"; echo "[$PS1][$CAME_FROM_BASHRC]"'
     result = subprocess.run(
         [*argv, "-c", probe],
@@ -361,11 +396,11 @@ def test_bash_really_ends_up_with_a_badged_prompt(tmp_path):
         env={"HOME": str(home), "PATH": os.environ["PATH"], "TERM": "dumb"},
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == f"[{runtools.SHELL_BADGE} \\w $ ][1]"
+    assert result.stdout.strip() == f"[{runtools.SHELL_TAG} \\w $ ][1]"
 
 
 @pytest.mark.skipif(shutil.which("zsh") is None, reason="zsh not installed")
-def test_zsh_really_ends_up_with_a_badged_prompt(tmp_path):
+def test_zsh_really_ends_up_with_a_tagged_prompt(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     (home / ".zshenv").write_text("export CAME_FROM_ZSHENV=1\n")
@@ -382,8 +417,8 @@ def test_zsh_really_ends_up_with_a_badged_prompt(tmp_path):
         env={"HOME": str(home), "PATH": os.environ["PATH"], "TERM": "dumb", **wiring},
     )
     assert result.returncode == 0, result.stderr
-    # badged once, both of the user's files ran, and ZDOTDIR was handed back
-    assert result.stdout.strip() == f"[{runtools.SHELL_BADGE} %~ %# ][11][]"
+    # tagged once, both of the user's files ran, and ZDOTDIR was handed back
+    assert result.stdout.strip() == f"[{runtools.SHELL_TAG} %~ %# ][11][]"
 
 
 def test_launch_refuses_an_empty_command():

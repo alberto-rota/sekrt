@@ -21,7 +21,7 @@ private git remote (GitHub, GitLab, self-hosted — anything).
 - 🏃 **`sekrt run`** — hand a command your secrets in its environment only, for exactly as long as it runs
 - 🗝️ **SSH keypairs** — import, generate (ed25519), and restore with correct permissions
 - ☁️ **Git sync** — every change is a commit; `sekrt sync` pushes/pulls a private repo
-- 🖥️ **TUI + CLI** — a full keyboard-driven interface *and* script-friendly commands
+- 🖥️ **TUI + CLI** — a full keyboard-driven interface, script-friendly commands, and a few lines of inline picker or form when you leave a name out
 - 🪶 **Lightweight** — three dependencies (`textual`, `click`, `cryptography`), no daemon, no sudo, no gpg setup
 
 ## Contents
@@ -36,6 +36,7 @@ private git remote (GitHub, GitLab, self-hosted — anything).
 - [The TUI](#the-tui)
 - [The inline picker](#the-inline-picker)
 - [Inline forms](#inline-forms)
+- [Revealing a secret](#revealing-a-secret)
 - [Colors](#colors)
 - [CLI reference](#cli-reference)
 - [Security model](#security-model)
@@ -72,13 +73,10 @@ passphrase — that passphrase *is* the vault; there's no recovery if you
 lose it, so pick something you'll remember, and see the
 [security model](#security-model) below before you rely on it for real.
 
-Anything that touches a secret's contents (`get`, `show`, `edit`, `add`,
-`mv`, `env`, `ssh`, …) decrypts the vault key on demand, so by default
-you'll be prompted for the passphrase each time — `ls`, `find`, `rm` and
-`status` don't need to decrypt anything, so they never prompt. Run
-`sekrt unlock` once and the rest stop prompting for an hour (`-t MIN` to
-change that), courtesy of a RAM-backed, user-private session cache — like
-`gpg-agent`, without the agent. `sekrt lock` forgets it immediately.
+Anything that touches a secret asks for the passphrase — `ls`, `find`, `rm` and
+`status` never do, because they decrypt nothing. `sekrt unlock` stops the asking
+for an hour, courtesy of a RAM-backed, user-private key cache: `gpg-agent`,
+without the agent.
 
 ```bash
 sekrt unlock              # cache the key for 60 min
@@ -170,13 +168,13 @@ instead, and the secrets live in *its* environment, for exactly as long as it
 runs:
 
 ```bash
-sekrt run -- npm start                            # everything, like a loaded .env
-sekrt run -e UV_PUBLISH_TOKEN -- uv publish       # or just the one
-sekrt run -c 'service log --token="$MY_TOKEN"'    # a shell expands the reference
+sekrt run 'npm start'                             # everything, like a loaded .env
+sekrt run -e UV_PUBLISH_TOKEN 'uv publish'        # or just the one
+sekrt run 'service log --token="$MY_TOKEN"'       # a shell expands the reference
 sekrt shell                                       # a subshell; `exit` revokes
 ```
 
-`sekrt shell` marks its prompt — `🔓 ~/code/my-saas ❯` — so a shell holding
+`sekrt shell` tags its prompt — `(sekrt) ~/code/my-saas ❯` — so a shell holding
 secrets never looks like an ordinary one, and leaves your theme, aliases and
 history exactly as they were (bash, zsh and fish).
 
@@ -192,8 +190,8 @@ child.
 
 > [!IMPORTANT]
 > **Your shell expands what you type, before sekrt runs.** Only sekrt's *child*
-> knows the values, so `-- echo $MY_TOKEN` and `-c "echo $MY_TOKEN"` both print an
-> empty line. Single-quote it — `-c 'echo $MY_TOKEN'` — or check with
+> knows the values, so `sekrt run "echo $MY_TOKEN"` in double quotes prints an
+> empty line. Single-quote it — `sekrt run 'echo $MY_TOKEN'` — or check with
 > `sekrt run -- printenv MY_TOKEN`.
 
 **🏃 [Full guide: running commands with your secrets](docs/run.md)** — what is and
@@ -251,9 +249,9 @@ instead.
 
 ## The inline picker
 
-Nobody remembers `cloud/aws-access-key-prod` exactly. Leave the name out —
-or type any part of it — and `get`, `show`, `edit` and `rm` open a few
-lines of picker under your prompt instead of erroring:
+Nobody remembers `cloud/aws-access-key-prod` exactly. Leave the name out — or
+type any part of it — and `get`, `show`, `edit` and `rm` open a few lines of
+picker under your prompt instead of erroring:
 
 ```bash
 sekrt get                 # pick from every entry
@@ -268,17 +266,13 @@ sekrt get aws             # start filtered to the matches for "aws"
  ↑↓ move · enter print · esc cancel
 ```
 
-The passphrase comes first, before the list draws — so the entry you pick
-is the last thing you do, not the first. (Run `sekrt unlock` and there's no
-prompt at all.) Keep typing to narrow the list down (`awsp` finds
-`aws-access-key-prod` — the filter matches scattered letters, not just
-substrings), `↑`/`↓` to move, `enter` to run the command on the row under
-the `❯`, `esc` to cancel.
+The passphrase comes first, before the list draws — so the entry you pick is the
+last thing you do, not the first. The filter matches scattered letters, not just
+substrings, so `awsp` finds `aws-access-key-prod`.
 
-The picker draws on stderr, so it doesn't get in the way of scripting:
-`sekrt get > .token` and `sekrt get | pbcopy` still put nothing but the
-secret on stdout. When there's no terminal at all — a pipe, a cron job,
-CI — commands keep their old behaviour and insist on an exact NAME.
+The picker draws on stderr, so scripting is untouched: `sekrt get > .token` and
+`sekrt get | pbcopy` still put nothing but the secret on stdout. Where there's no
+terminal at all — a pipe, cron, CI — commands insist on an exact NAME instead.
 
 ## Inline forms
 
@@ -294,10 +288,36 @@ in with a generated one, `enter` saves, `esc` leaves. Same rules as the picker:
 drawn on stderr, only as many lines as there are fields, and where there's no
 terminal the commands keep insisting on their arguments instead.
 
+## Revealing a secret
+
+`sekrt show` masks the secret fields; `--reveal` (`-r`) prints them — last, after
+the metadata, each one alone on an unindented line of its own:
+
+```text
+work/github
+  type: password
+  username: alberto
+
+  password:
+aI9lSOSJ%E!@aHrX~R+8
+
+  press c to copy password · any other key to dismiss
+```
+
+Nothing ever shares a line with a secret, so a double- or triple-click selects
+the value and only the value — and a revealed SSH key comes out pasteable rather
+than indented into uselessness. At a terminal, `c` copies it (cleared after 45s);
+that prompt is stderr-only and erases itself, so a redirect still catches the
+secret and nothing else, and where there's no terminal it never appears.
+
 ## Colors
 
-sekrt draws itself in three colors — and they're yours to pick. `sekrt config`
-opens a small panel under your prompt:
+sekrt draws itself in three colors, and they're yours to pick. `sekrt config`
+opens a panel under your prompt where `←`/`→` walks eleven ready-made palettes
+and applies each as you land on it — swatches, preview *and* the panel's own
+chrome repaint together, so a palette is judged in place rather than after a
+restart. `enter` keeps it, `esc` leaves everything as it was, `ctrl+r` puts the
+stock metal-and-red back.
 
 ```text
 preset     ███ metal  ███ teal  ███ amber  ███ indigo  ███ magenta  ███ mono
@@ -308,72 +328,25 @@ accent     #ff0000  ███  cursor, key hints, highlights
 ────────────────────────────────────────────────────────────────────────────
 🔴 sekrt — your secrets, encrypted & synced
 ❯ 🔐 work/github   password: ••••••••
-c copy · r reveal · / filter · s sync
 ←→ preset · tab/↑↓ fields · enter save · ctrl+r defaults · esc cancel
 ```
 
-The fast way needs no typing at all: `←`/`→` walks the eleven ready-made
-palettes and applies each one as you land on it — the swatches, the preview
-*and* the panel's own chrome repaint — then `enter` keeps it. `esc` leaves
-everything as it was, `ctrl+r` puts the stock metal-and-red back.
-
-There are eleven, one per hue, so no two of them cost you a keypress to tell
-apart: `metal` (the stock grey and red), `mono` (no hue at all), and one each
-for `teal`, `amber`, `indigo`, `magenta`, `matrix` green, `ice` cyan, `violet`,
-`rose` and `sepia` warm brown.
-
-Want a color of your own? `tab` down to the three fields and type one: hex
-(`#00d7af`, `0d7`) or a CSS name (`cyan`). The preset row deselects itself once
-the palette is no longer one of the eleven, and re-selects if you type your way
-back onto one. A half-typed color changes nothing until it reads as a color.
-
-The same editor is one keypress away inside the TUI (`t`), where the interface
-behind it repaints live.
-
-The dark background is deliberately not customizable: it's what keeps an
+Eleven, one per hue, so no two cost you a keypress to tell apart. Want one of
+your own? `tab` down to the fields and type it: hex (`#00d7af`, `0d7`) or a CSS
+name (`cyan`). The same editor is `t` inside the TUI, where the interface behind
+it recolors live. The dark background is deliberately fixed — it's what keeps an
 arbitrary accent readable.
 
-For scripts, dotfiles and anyone who'd rather not open a panel:
-
 ```bash
-sekrt config --preset matrix             # any of the eleven, by name
-sekrt config --accent '#00d7af'          # set one color
+sekrt config --preset matrix                     # any of the eleven, by name
 sekrt config --preset amber --accent '#ff0088'   # a preset, then tune it
-sekrt config --primary cyan --secondary 5f6672
-sekrt config --show                      # what's set now, plus the presets
-sekrt config --reset                     # back to metal & red
+sekrt config --show                              # what's set now, plus the presets
+sekrt config --reset                             # back to metal & red
 ```
 
 Colors live in `~/.config/sekrt/config.json` — *not* in the vault, so tweaking
-them is neither a commit nor a push, and each machine can look however you
-like. Aliases: `sekrt colors`, `sekrt theme`.
-
-## Revealing a secret
-
-`sekrt show` masks the secret fields; `--reveal` (`-r`) prints them — last,
-after the metadata, each one alone on an unindented line of its own:
-
-```text
-work/github
-  type: password
-  username: alberto
-  url: https://github.com
-
-  password:
-aI9lSOSJ%E!@aHrX~R+8
-
-  press c to copy password · any other key to dismiss
-```
-
-Nothing ever shares a line with a secret, so a double- or triple-click
-selects the value and only the value — and a revealed SSH key comes out
-byte-for-byte pasteable rather than indented into uselessness.
-
-At a terminal, `c` copies the secret to the clipboard (which clears after
-45s, as everywhere else); any other key — or 20 seconds of silence — takes
-the prompt back down. The prompt and its answer are written to stderr and
-erase themselves, so a redirect still catches the secret and nothing else,
-and where there's no terminal (a pipe, cron, CI) it never appears at all.
+them is neither a commit nor a push, and each machine can look however you like.
+Aliases: `sekrt colors`, `sekrt theme`.
 
 ## CLI reference
 
@@ -390,9 +363,10 @@ sekrt mv OLD NEW               rename                      (alias: rename)
 sekrt rm [NAME] [-f]           delete                      (alias: remove)
 sekrt generate [LEN] [--token] generate without storing
 sekrt env push|pull|ls|show|rm .env files per repository    (guide: docs/env.md)
-sekrt run -- CMD               run CMD with your secrets in its env (alias: exec)
-sekrt run -e VAR -- CMD        ...narrowed to VAR   (-n: show, don't run)
-sekrt run -c 'CMD $VAR'        ...through a shell, so it expands $VAR
+sekrt run 'CMD'                run CMD with your secrets in its env (alias: exec)
+sekrt run -e VAR 'CMD'         ...narrowed to VAR   (-n: show, don't run)
+sekrt run 'CMD $VAR'           quoted: a shell reads it, so it expands $VAR
+sekrt run -- CMD ARGS...       ...or hand over an argv, with no shell at all
 sekrt shell [-e VAR]           a subshell holding them; exit revokes (alias: sh)
 sekrt ssh add|restore|ls|pub   SSH keypairs
 sekrt file add|get|ls          whole files, binary-safe
@@ -524,9 +498,9 @@ The `env`, `run` and `forms` tapes are self-contained: each rebuilds its fixture
 — real git repos with remotes, a fresh clone, a scratch vault — under
 `/tmp/sekrt-vhs-*` (`docs/vhs/setup-env-demo.sh`, `docs/vhs/setup-run-demo.sh`)
 and points `$HOME` at it, so your real vault and `~/.gitconfig` are never
-touched. Fixtures generate their secrets rather than piping them in: `sekrt add`
-reads a typed secret through `getpass`, which reads `/dev/tty`, so a pipe would
-be ignored and the recording would hang on a keyboard that isn't there.
+touched. Their fixtures *generate* secrets rather than piping them in: `sekrt add`
+reads through `getpass`, which reads `/dev/tty`, so a pipe is ignored and the
+recording would hang waiting for a keyboard.
 
 `docs/screenshot.svg` (the image at the top of this file) is a Textual export
 rather than a recording, so it has its own generator:
