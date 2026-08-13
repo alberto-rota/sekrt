@@ -108,3 +108,100 @@ async def test_search_filters_tree(populated_vault):
         tree = app.query_one("#tree")
         labels = {str(node.label) for node in tree.root.children}
         assert labels == {"📁 personal"}
+
+
+async def test_colors_modal_previews_live_saves_on_enter(populated_vault):
+    """`t` opens the editor; the TUI behind it repaints, and enter persists."""
+    from textual.widgets import Input
+
+    from sekrt.prefs import load_palette
+    from sekrt.tui.app import PaletteModal
+
+    v, key = populated_vault
+    app = SekrtApp(vault=v, key=key)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        leaf = app.query_one("#tree").root.children[0].children[0]
+        app.query_one("#tree").select_node(leaf)
+        await pilot.pause()
+
+        await pilot.press("t")
+        await pilot.pause()
+        assert isinstance(app.screen, PaletteModal)
+        assert app.window_chrome == ("sekrt — colors", None)
+
+        field = app.screen.query_one("#c-accent", Input)
+        field.focus()
+        field.clear()
+        await pilot.pause()
+        await pilot.press(*"#00d7af")
+        await pilot.pause()
+        assert app.current_theme.accent == "#00d7af"  # live, before saving
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.palette.accent == "#00d7af"
+        assert load_palette().accent == "#00d7af"  # written to the config file
+        assert "#00d7af" in app.detail_markup  # the entry's fields, recolored
+
+
+async def test_cancelling_the_colors_modal_restores_the_old_palette(populated_vault):
+    from textual.widgets import Input
+
+    from sekrt.prefs import DEFAULT_PALETTE, prefs_path
+
+    v, key = populated_vault
+    app = SekrtApp(vault=v, key=key)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("t")
+        await pilot.pause()
+        field = app.screen.query_one("#c-accent", Input)
+        field.focus()
+        field.clear()
+        await pilot.pause()
+        await pilot.press(*"#00d7af")
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.palette == DEFAULT_PALETTE
+        assert app.current_theme.accent == DEFAULT_PALETTE.accent
+        assert not prefs_path().exists()
+
+
+async def test_the_tui_starts_in_the_saved_colors(vault):
+    from sekrt.prefs import Palette, save_palette
+
+    save_palette(Palette(primary="#8fb3ff", accent="#00d7af"))
+    v, key = vault
+    app = SekrtApp(vault=v, key=key)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        assert app.current_theme.primary == "#8fb3ff"
+        assert "#00d7af" in app.detail_markup  # the welcome line's key hints
+
+
+async def test_arrowing_a_preset_in_the_modal_and_saving_from_the_preset_row(vault):
+    """The quick path: `t`, arrow to a palette, enter — no typing at all."""
+    from sekrt.prefs import PRESET_NAMES, PRESETS, load_palette
+    from sekrt.tui.colors import PresetBar
+
+    v, key = vault
+    app = SekrtApp(vault=v, key=key)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("t")
+        await pilot.pause()
+        bar = app.screen.query_one(PresetBar)
+        assert app.focused is bar
+
+        await pilot.press("right")
+        await pilot.pause()
+        expected = PRESETS[PRESET_NAMES[1]]
+        assert app.current_theme.primary == expected.primary  # live behind the modal
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.palette == expected
+        assert load_palette() == expected

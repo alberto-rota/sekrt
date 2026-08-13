@@ -176,6 +176,10 @@ sekrt run -c 'service log --token="$MY_TOKEN"'    # a shell expands the referenc
 sekrt shell                                       # a subshell; `exit` revokes
 ```
 
+`sekrt shell` marks its prompt — `🔓 ~/code/my-saas ❯` — so a shell holding
+secrets never looks like an ordinary one, and leaves your theme, aliases and
+history exactly as they were (bash, zsh and fish).
+
 ![sekrt run](docs/run.gif)
 
 With nothing named, a command gets every `password` and `api_key` entry — under
