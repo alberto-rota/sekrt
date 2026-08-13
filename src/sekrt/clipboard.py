@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 
 DEFAULT_CLEAR_AFTER = 45
+KEY_TIMEOUT = 20  # seconds a `press c to copy` prompt waits before giving up
 
 
 class ClipboardError(Exception):
@@ -46,6 +48,40 @@ def _find_tool() -> ClipTool | None:
 
 def available() -> bool:
     return _find_tool() is not None
+
+
+def read_key(timeout: float | None = None) -> str | None:
+    """One keypress from the controlling terminal, or None if none arrives.
+
+    Used by the ``press c to copy`` prompt: reading the *terminal* rather than
+    stdin keeps the prompt working when stdin is a pipe, and reading raw means
+    a single ``c`` is enough — no Enter. The timeout is what keeps a command
+    that merely prints something from turning into one that waits forever when
+    nobody is watching the terminal (a pty in CI, a detached pane).
+    """
+    try:
+        import termios
+        import tty
+    except ImportError:  # no POSIX terminal (Windows)
+        return None
+    try:
+        with open("/dev/tty", "rb", buffering=0) as terminal:
+            fd = terminal.fileno()
+            saved = termios.tcgetattr(fd)
+            try:
+                tty.setraw(fd)
+                # Whatever was typed while the command ran was not an answer to
+                # a prompt that did not exist yet — an idle `c` must not copy.
+                termios.tcflush(fd, termios.TCIFLUSH)
+                wait = KEY_TIMEOUT if timeout is None else timeout
+                if not select.select([fd], [], [], wait)[0]:
+                    return None
+                char = terminal.read(1)
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+    except (OSError, termios.error):
+        return None
+    return char.decode(errors="replace") if char else None
 
 
 _CLEAR_SRC = """

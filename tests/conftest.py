@@ -27,6 +27,14 @@ def isolated_session(tmp_path, monkeypatch):
     monkeypatch.delenv("DISPLAY", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def isolated_prefs(tmp_path, monkeypatch):
+    """Never read or overwrite the user's real color preferences."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.delenv("SEKRT_CONFIG", raising=False)
+    monkeypatch.delenv("TUPACS_CONFIG", raising=False)
+
+
 @pytest.fixture
 def vault_dir(tmp_path, monkeypatch):
     d = tmp_path / "vault"

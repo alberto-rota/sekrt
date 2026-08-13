@@ -8,59 +8,27 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.theme import Theme
 from textual.widgets import Button, Footer, Header, Input, Label, Select, Static, TextArea, Tree
 
 from sekrt import clipboard, gitsync, session
 from sekrt.crypto import CryptoError, WrongPassphraseError
 from sekrt.generate import generate_password
+from sekrt.prefs import DEFAULT_PALETTE, Palette, PrefsError, load_palette, save_palette
+from sekrt.tui.colors import EDITOR_CSS, NAV_HINT, PaletteEditor
+from sekrt.tui.theme import BACKGROUND, BADGE, apply_palette
 from sekrt.vault import Vault, VaultError, new_entry, primary_field
 
 SENSITIVE_FIELDS = {"password", "key", "secret", "token", "private", "content", "notes"}
 MASK = "••••••••••"
 EDITABLE_TYPES = ("password", "api_key", "note")
 
-# brushed-metal palette: gray structure, red accent
-METAL = "#aaaaaa"
-RED = "#ff0000"
-STEEL = "#6e737a"
-BADGE = "🔴"
 
-METAL_THEME = Theme(
-    name="metal",
-    primary=METAL,
-    secondary=STEEL,
-    accent=RED,
-    error=RED,
-    warning="#d9a13b",
-    success="#8fbf7a",
-    foreground="#d7dade",
-    background="#0d0e10",
-    surface="#16181b",
-    panel="#1e2124",
-    dark=True,
-    variables={
-        "border": METAL,
-        "border-blurred": "#3a3e44",
-        "block-cursor-background": RED,
-        "block-cursor-foreground": "#0d0e10",
-        "block-cursor-text-style": "bold",
-        "footer-key-foreground": RED,
-        "footer-description-foreground": METAL,
-        "input-selection-background": f"{RED} 35%",
-        "input-cursor-background": RED,
-        "input-cursor-foreground": "#0d0e10",
-        "scrollbar": "#2a2e33",
-        "scrollbar-hover": STEEL,
-        "scrollbar-active": METAL,
-        "text-muted": STEEL,
-    },
-)
-
-WELCOME = (
-    f"[{STEEL}]select an entry on the left — or press "
-    f"[b {RED}]a[/] to add, [b {RED}]/[/] to filter, [b {RED}]s[/] to sync[/]"
-)
+def welcome_markup(p: Palette) -> str:
+    return (
+        f"[{p.secondary}]select an entry on the left — or press "
+        f"[b {p.accent}]a[/] to add, [b {p.accent}]/[/] to filter, "
+        f"[b {p.accent}]s[/] to sync[/]"
+    )
 
 
 def window_chrome_sequences(title: str, background: str | None) -> str:
@@ -124,9 +92,15 @@ class UnlockScreen(WindowChrome, ModalScreen[bytes]):
     def on_mount(self) -> None:
         self.query_one("#unlock-input", Input).focus()
 
+    @property
+    def palette(self) -> Palette:
+        return self.app.palette  # type: ignore[attr-defined]
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.value:
-            self.query_one("#unlock-error", Static).update(f"[{STEEL}]unlocking…[/]")
+            self.query_one("#unlock-error", Static).update(
+                f"[{self.palette.secondary}]unlocking…[/]"
+            )
             self._unlock(event.value)
 
     @work(thread=True)
@@ -136,7 +110,7 @@ class UnlockScreen(WindowChrome, ModalScreen[bytes]):
         except WrongPassphraseError:
             def fail() -> None:
                 self.query_one("#unlock-error", Static).update(
-                    f"[b {RED}]wrong passphrase[/]"
+                    f"[b {self.palette.accent}]wrong passphrase[/]"
                 )
                 box = self.query_one("#unlock-input", Input)
                 box.value = ""
@@ -225,6 +199,59 @@ class EntryModal(WindowChrome, ModalScreen["dict | None"]):
         self.dismiss(None)
 
 
+class PaletteModal(WindowChrome, ModalScreen["Palette | None"]):
+    """The color editor, live: the TUI behind it repaints as the fields change.
+
+    Escape puts the palette you arrived with back on screen, so backing out of
+    a bad experiment costs nothing.
+    """
+
+    BINDINGS = [
+        Binding("enter", "save", "Save", show=False),  # what saves from the preset row
+        Binding("escape", "cancel", "Cancel"),
+        Binding("ctrl+r", "defaults", "Defaults"),
+    ]
+    WINDOW_TITLE = "sekrt — colors"
+
+    def __init__(self, palette: Palette) -> None:
+        super().__init__()
+        self.original = palette
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="palette-box"):
+            yield Label("Colors", id="palette-title")
+            yield PaletteEditor(self.original)
+            yield Label(NAV_HINT, id="palette-hint")
+            with Horizontal(classes="buttons"):
+                yield Button("Defaults", id="btn-defaults")
+                yield Button("Save", variant="primary", id="btn-save")
+                yield Button("Cancel", id="btn-cancel")
+
+    def on_palette_editor_changed(self, event: PaletteEditor.Changed) -> None:
+        apply_palette(self.app, event.palette)
+
+    def on_input_submitted(self) -> None:
+        self.action_save()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-save":
+            self.action_save()
+        elif event.button.id == "btn-defaults":
+            self.action_defaults()
+        else:
+            self.action_cancel()
+
+    def action_save(self) -> None:
+        self.dismiss(self.query_one(PaletteEditor).palette)
+
+    def action_defaults(self) -> None:
+        self.query_one(PaletteEditor).set_palette(DEFAULT_PALETTE)
+
+    def action_cancel(self) -> None:
+        apply_palette(self.app, self.original)
+        self.dismiss(None)
+
+
 class ConfirmModal(WindowChrome, ModalScreen[bool]):
     BINDINGS = [
         Binding("y", "yes", "Yes"),
@@ -259,9 +286,11 @@ class SekrtApp(App[None]):
     TITLE = "sekrt"
     SUB_TITLE = "your secrets, encrypted & synced"
     WINDOW_TITLE = "sekrt"
-    WINDOW_BACKGROUND = "#0d0e10"  # matches METAL_THEME's background
+    WINDOW_BACKGROUND = BACKGROUND  # the terminal window matches the theme
 
-    CSS = """
+    CSS = (
+        EDITOR_CSS
+        + """
     Screen { background: $background; }
 
     Header { background: $panel; color: $primary; text-style: bold; }
@@ -280,7 +309,7 @@ class SekrtApp(App[None]):
     #tree > .tree--guides-selected { color: $accent; }
     #detail-pane { padding: 1 2; background: $background; }
 
-    UnlockScreen, EntryModal, ConfirmModal { align: center middle; }
+    UnlockScreen, EntryModal, ConfirmModal, PaletteModal { align: center middle; }
     #unlock-box { width: 60; height: auto; border: round $primary; padding: 1 2;
                   background: $surface; }
     #unlock-title { width: 100%; text-align: center; text-style: bold; color: $primary; }
@@ -306,6 +335,14 @@ class SekrtApp(App[None]):
     #confirm-box { width: 56; height: auto; border: round $accent; padding: 1 2;
                    background: $surface; }
     #confirm-box .buttons { margin-top: 1; }
+
+    /* Wide enough for the preset row when the terminal allows it; the row
+       scrolls rather than the box overflowing when it doesn't. */
+    #palette-box { width: 84; max-width: 100%; height: auto; border: round $primary;
+                   padding: 1 2; background: $surface; }
+    #palette-title { text-style: bold; color: $primary; margin-bottom: 1; }
+    #palette-hint { color: $text-muted; margin-top: 1; }
+    #palette-box .buttons { margin-top: 1; }
     Toast { background: $panel; color: $foreground; border-left: outer $primary; }
     Toast.-error { border-left: outer $accent; }
 
@@ -318,6 +355,7 @@ class SekrtApp(App[None]):
     .buttons Button.-primary:hover, .buttons Button.-error:hover { background: $primary;
                                                                    color: $background; }
     """
+    )
 
     BINDINGS = [
         Binding("a", "add_entry", "Add"),
@@ -328,6 +366,7 @@ class SekrtApp(App[None]):
         Binding("r", "toggle_reveal", "Reveal"),
         Binding("s", "sync", "Sync"),
         Binding("slash", "focus_search", "Filter", key_display="/"),
+        Binding("t", "colors", "Colors"),
         Binding("l", "lock", "Lock"),
         Binding("q", "quit", "Quit"),
     ]
@@ -336,13 +375,17 @@ class SekrtApp(App[None]):
         super().__init__()
         self.vault = vault or Vault()
         self.key = key
+        self.palette = load_palette()  # the user's colors (`sekrt config`, or `t`)
         self.current: str | None = None
         self.current_entry: dict | None = None
         self.revealed = False
-        self.detail_markup = WELCOME  # mirrors the #detail Static, handy for tests
+        self.detail_markup = self.welcome()  # mirrors the #detail Static, handy for tests
         self._editing_name: str | None = None  # entry being edited, None while adding
         # (title, background) currently claimed by the host window — mirrored for tests
         self.window_chrome: tuple[str, str | None] = (self.WINDOW_TITLE, None)
+
+    def welcome(self) -> str:
+        return welcome_markup(self.palette)
 
     # -- window chrome -------------------------------------------------------
 
@@ -370,12 +413,11 @@ class SekrtApp(App[None]):
             with Vertical(id="sidebar"):
                 yield Input(placeholder="filter…  ( / )", id="search")
                 yield Tree(f"{BADGE} vault", id="tree")
-            yield VerticalScroll(Static(WELCOME, id="detail"), id="detail-pane")
+            yield VerticalScroll(Static(self.welcome(), id="detail"), id="detail-pane")
         yield Footer()
 
     def on_mount(self) -> None:
-        self.register_theme(METAL_THEME)
-        self.theme = "metal"
+        apply_palette(self, self.palette)
         self.restore_window_chrome()
         if self.key is None:
             cached = session.load_key(self.vault.path)
@@ -426,11 +468,12 @@ class SekrtApp(App[None]):
             folders["/".join(parts[:-1])].add_leaf(parts[-1], data=name)
         tree.root.expand_all()
         if not names:
+            p = self.palette
             self.show_detail_message(
-                f"[{STEEL}]vault is empty — press [b {RED}]a[/] "
-                f"[{STEEL}]to add your first entry[/]"
+                f"[{p.secondary}]vault is empty — press [b {p.accent}]a[/] "
+                f"[{p.secondary}]to add your first entry[/]"
                 if not filter_text
-                else f"[{STEEL}]no entries match the filter[/]"
+                else f"[{p.secondary}]no entries match the filter[/]"
             )
 
     def show_detail_message(self, markup: str) -> None:
@@ -456,25 +499,27 @@ class SekrtApp(App[None]):
         if self.current is None or self.current_entry is None:
             return
         entry = self.current_entry
+        p = self.palette
+        type_ = escape(entry["type"])
         lines = [
-            f"[b {METAL}]{escape(self.current)}[/]  [{STEEL}]({escape(entry['type'])})[/]",
-            f"[{STEEL}]{'─' * 40}[/]",
+            f"[b {p.primary}]{escape(self.current)}[/]  [{p.secondary}]({type_})[/]",
+            f"[{p.secondary}]{'─' * 40}[/]",
         ]
         for field, value in entry["data"].items():
             hidden = field in SENSITIVE_FIELDS and not self.revealed
-            label = f"[b {RED}]{escape(field)}[/]"
+            label = f"[b {p.accent}]{escape(field)}[/]"
             if "\n" in value:
                 if hidden:
                     lines.append(
-                        f"{label}: [{STEEL}]({len(value.splitlines())} lines — press r)[/]"
+                        f"{label}: [{p.secondary}]({len(value.splitlines())} lines — press r)[/]"
                     )
                 else:
                     lines.append(f"{label}:")
                     lines.extend("  " + escape(line) for line in value.splitlines())
             else:
                 lines.append(f"{label}: {MASK if hidden else escape(value)}")
-        keys = f" [{STEEL}]·[/] ".join(
-            f"[b {RED}]{k}[/] [{METAL}]{d}[/]"
+        keys = f" [{p.secondary}]·[/] ".join(
+            f"[b {p.accent}]{k}[/] [{p.primary}]{d}[/]"
             for k, d in (("c", "copy"), ("r", "reveal"), ("e", "edit"), ("d", "delete"))
         )
         lines += ["", keys]
@@ -614,7 +659,7 @@ class SekrtApp(App[None]):
         except VaultError as exc:
             self.notify(str(exc), severity="error")
             return
-        self.show_detail_message(WELCOME)
+        self.show_detail_message(self.welcome())
         self.refresh_tree(self.query_one("#search", Input).value)
         self.notify(f"deleted {name}", timeout=3)
 
@@ -629,10 +674,41 @@ class SekrtApp(App[None]):
             self.notify, msg, severity="information" if ok else "error", timeout=6
         )
 
+    # -- colors --------------------------------------------------------------
+
+    def action_colors(self) -> None:
+        self.push_screen(PaletteModal(self.palette), self._on_palette_chosen)
+
+    def _on_palette_chosen(self, palette: Palette | None) -> None:
+        """Store a saved palette on disk and on screen; a cancelled one needs nothing.
+
+        Live editing only repaints the theme (borders, footer, cursor); the text
+        whose colors are written into its markup is redrawn here, once, so a
+        cancelled experiment leaves it untouched.
+        """
+        if palette is None:
+            return
+        self.palette = palette
+        apply_palette(self, palette)
+        self.repaint_markup()
+        try:
+            path = save_palette(palette)
+        except PrefsError as exc:
+            self.notify(str(exc), severity="error")
+            return
+        self.notify(f"colors saved to {path}", timeout=4)
+
+    def repaint_markup(self) -> None:
+        """Redraw the text whose colors are baked into markup, not the theme."""
+        if self.current_entry is not None:
+            self.render_detail()
+        else:
+            self.show_detail_message(self.welcome())
+
     def action_lock(self) -> None:
         session.clear(self.vault.path)
         self.key = None
-        self.show_detail_message(WELCOME)
+        self.show_detail_message(self.welcome())
         self.query_one("#tree", Tree).clear()
         self.push_screen(UnlockScreen(self.vault), self._on_unlocked)
 

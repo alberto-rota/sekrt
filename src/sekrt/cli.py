@@ -7,14 +7,27 @@ import functools
 import json
 import re
 import shutil
+import sys
 from pathlib import Path
 
 import click
 
-from sekrt import __version__, clipboard, compat, envtools, filetools, gitsync, session, sshtools
+from sekrt import (
+    __version__,
+    clipboard,
+    compat,
+    envtools,
+    filetools,
+    gitsync,
+    prefs,
+    runtools,
+    session,
+    sshtools,
+)
 from sekrt.clipboard import ClipboardError
 from sekrt.crypto import CryptoError, WrongPassphraseError
 from sekrt.generate import DEFAULT_LENGTH, generate_password, generate_token
+from sekrt.prefs import PrefsError
 from sekrt.util import EditorError, edit_text
 from sekrt.vault import (
     PRIMARY_FIELD,
@@ -28,6 +41,11 @@ SENSITIVE_FIELDS = {
     "password", "key", "secret", "token", "private", "content", "notes", "content_b64",
 }
 MASK = "********"
+
+# The unlock prompt: the same padlock the picker puts on an entry, and the same
+# ❯ it puts on the row under the cursor.
+UNLOCK_BADGE = "🔐"
+PROMPT_MARKER = "❯"
 
 # C0/C1 control characters minus \t and \n — entry data can originate from
 # files other people authored (`sekrt env push`), so `show` must not let
@@ -47,6 +65,10 @@ ALIASES = {
     "search": "find",
     "gen": "generate",
     "ui": "tui",
+    "colors": "config",
+    "theme": "config",
+    "exec": "run",
+    "sh": "shell",
 }
 
 
@@ -60,7 +82,7 @@ def friendly_errors(f):
     def wrapper(*args, **kwargs):
         try:
             return f(*args, **kwargs)
-        except (VaultError, CryptoError, ClipboardError, EditorError) as exc:
+        except (VaultError, CryptoError, ClipboardError, EditorError, PrefsError) as exc:
             raise click.ClickException(str(exc)) from exc
 
     return wrapper
@@ -78,6 +100,36 @@ def get_vault(must_exist: bool = True) -> Vault:
     return vault
 
 
+def _rgb(color: str) -> tuple[int, int, int]:
+    return (int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16))
+
+
+def _paint(text: str, color: str, *, bold: bool = False) -> str:
+    """*text* in one of the palette's colors — plain where nothing can show it.
+
+    `click.style` always emits escapes; the prompt can end up on a pipe (no
+    terminal to interpret them), so the check happens here rather than being
+    left to `echo`.
+    """
+    if not text or not _at_terminal():
+        return text
+    return click.style(text, fg=_rgb(color), bold=bold)
+
+
+def unlock_prompt(vault: Vault, palette: prefs.Palette) -> str:
+    """The passphrase prompt, wearing the colors the rest of sekrt wears.
+
+    Names the vault only when `$SEKRT_VAULT` points at one: whoever keeps a
+    scratch vault there gets to see which one they are about to open, and nobody
+    on the stock path pays for the noise.
+    """
+    where = f" {vault.path.name}" if compat.env("VAULT") else ""
+    return (
+        f"{UNLOCK_BADGE} {_paint('passphrase', palette.primary, bold=True)}"
+        f"{_paint(where, palette.secondary)} {_paint(PROMPT_MARKER, palette.accent)} "
+    )
+
+
 def obtain_key(vault: Vault) -> bytes:
     """Session cache -> $SEKRT_PASSPHRASE -> interactive prompt."""
     key = session.load_key(vault.path)
@@ -86,19 +138,110 @@ def obtain_key(vault: Vault) -> bytes:
     phrase = compat.env("PASSPHRASE")
     if phrase is not None:
         return vault.unlock(phrase)
+
+    palette = prefs.load_palette()
+    prompt = unlock_prompt(vault, palette)
     for attempt in range(3):
-        phrase = click.prompt("Passphrase", hide_input=True)
+        # getpass writes the prompt to the terminal itself, which is what keeps
+        # stdout free for the secret: `sekrt get > .token` catches only the value.
+        phrase = click.prompt(prompt, hide_input=True, prompt_suffix="", err=True)
         try:
             return vault.unlock(phrase)
         except WrongPassphraseError:
-            if attempt < 2:
-                click.secho("wrong passphrase, try again", fg="red", err=True)
+            left = 2 - attempt
+            if left:
+                tries = "try" if left == 1 else "tries"
+                click.echo(
+                    _paint(f"  ✗ wrong passphrase — {left} {tries} left", palette.accent),
+                    err=True,
+                )
     raise click.ClickException("wrong passphrase (3 attempts)")
 
 
 def _suggest(vault: Vault, name: str) -> str:
     matches = difflib.get_close_matches(name, vault.list_entries(), n=3, cutoff=0.5)
     return f" — did you mean: {', '.join(matches)}?" if matches else ""
+
+
+def _picker_entries(vault: Vault, name: str | None) -> list[str] | None:
+    """The entries to offer for NAME, or None when NAME can be used as it is.
+
+    Nobody remembers `cloud/aws-access-key-prod` exactly, so an omitted or
+    unknown NAME is answered with the inline picker at a terminal. Pipes and
+    scripts keep the old behaviour — a hard error — because there is nobody
+    there to answer. Everything that can fail is decided here, before the
+    caller asks for the passphrase.
+    """
+    if name is not None and vault.exists(name):
+        return None
+
+    from sekrt.tui import picker
+
+    if not picker.interactive():
+        if name is None:
+            raise click.ClickException("NAME is required when not running in a terminal")
+        raise click.ClickException(f"no entry named {name!r}{_suggest(vault, name)}")
+
+    names = vault.list_entries()
+    if not names:
+        raise click.ClickException("vault is empty — add something with `sekrt add`")
+    return names
+
+
+def _pick(names: list[str], query: str | None, action: str) -> str:
+    from sekrt.tui import picker
+
+    chosen = picker.pick(names, query=query or "", action=action)
+    if chosen is None:
+        raise click.Abort
+    return chosen
+
+
+def resolve_name(vault: Vault, name: str | None, *, action: str = "select") -> str:
+    """Turn what the user typed into an entry name, picking one interactively if needed."""
+    names = _picker_entries(vault, name)
+    return name if names is None else _pick(names, name, action)  # type: ignore[return-value]
+
+
+def resolve_entry(vault: Vault, name: str | None, *, action: str = "select") -> tuple[str, bytes]:
+    """Resolve NAME *and* unlock the vault, in that order.
+
+    The passphrase is asked for before the picker draws: a list you can already
+    act on beats one that hands you a prompt after you have chosen.
+    """
+    names = _picker_entries(vault, name)
+    key = obtain_key(vault)
+    if names is None:
+        return name, key  # type: ignore[return-value]
+    return _pick(names, name, action), key
+
+
+def use_form(name: str | None, interactive: bool) -> bool:
+    """Should this command draw its inline form instead of reading flags?
+
+    The rule the picker already set: an omitted NAME at a terminal is answered
+    with a few lines of TUI, and a pipe or a cron job — where there is nobody to
+    answer — keeps insisting on arguments.
+    """
+    from sekrt.tui import picker
+
+    if not interactive and name is not None:
+        return False
+    if picker.interactive():
+        return True
+    if interactive:
+        raise click.ClickException("--interactive needs a terminal to draw on")
+    raise click.ClickException("NAME is required when not running in a terminal")
+
+
+def _fill(fields: list, *, title: str) -> dict[str, str]:
+    """Run the inline form, treating a cancelled one as `esc` always means here."""
+    from sekrt.tui import form
+
+    filled = form.fill(fields, title=title)
+    if filled is None:
+        raise click.Abort
+    return filled
 
 
 @click.group(cls=AliasedGroup, invoke_without_command=True)
@@ -243,9 +386,31 @@ def status() -> None:
 # --------------------------------------------------------------------------- entries
 
 
+ADD_TYPES = ("password", "api_key", "note")
+
+
+def _add_form(name: str | None, type_: str) -> dict[str, str]:
+    """The six fields of `sekrt add`, as a form instead of six flags."""
+    from sekrt.tui import form
+
+    return _fill(
+        [
+            form.Field("name", "name", placeholder="work/github", value=name or "",
+                       required=True),
+            form.Field("type", "type", value=type_, choices=ADD_TYPES),
+            form.Field("username", "username", placeholder="optional"),
+            form.Field("secret", "secret", placeholder="type it, or ctrl+g to generate",
+                       secret=True, generate=True),
+            form.Field("url", "url", placeholder="optional"),
+            form.Field("notes", "notes", placeholder="optional"),
+        ],
+        title="new entry",
+    )
+
+
 @main.command()
-@click.argument("name")
-@click.option("--type", "-t", "type_", type=click.Choice(["password", "api_key", "note"]),
+@click.argument("name", required=False)
+@click.option("--type", "-t", "type_", type=click.Choice(ADD_TYPES),
               default="password", show_default=True)
 @click.option("--username", "-u", default=None, help="Username / login.")
 @click.option("--url", default=None, help="Associated URL.")
@@ -255,26 +420,54 @@ def status() -> None:
 @click.option("--no-symbols", is_flag=True, help="Generated secret: letters and digits only.")
 @click.option("--show", "-s", is_flag=True, help="Print the generated secret.")
 @click.option("--force", "-f", is_flag=True, help="Overwrite an existing entry.")
+@click.option("--interactive", "-i", is_flag=True, help="Fill the inline form even with a NAME.")
 @friendly_errors
-def add(name, type_, username, url, notes, generate_, length, no_symbols, show, force) -> None:
+def add(name, type_, username, url, notes, generate_, length, no_symbols, show, force,
+        interactive) -> None:
     """Add an entry (a password, an API key, or a note).
 
+    With no NAME (or with -i) this opens a few lines of inline form — name,
+    type, username, secret, url, notes — instead of asking for the same thing
+    in flags. `ctrl+g` fills the secret in for you.
+
     \b
+      sekrt add                                    # the form
       sekrt add work/github -u alberto -g
       sekrt add cloud/aws-key -t api_key
       sekrt add wifi/office -t note --notes "WPA2 ..."
     """
     vault = get_vault()
+    # Everything that can fail is settled before the passphrase is asked for,
+    # and the passphrase before the form draws — the picker's order, for the same
+    # reason: a form you can submit beats one that prompts after you fill it.
+    wants_form = use_form(name, interactive)
     key = obtain_key(vault)
+
+    form_secret: str | None = None
+    if wants_form:
+        filled = _add_form(name, type_)
+        name, type_ = filled["name"], filled["type"]
+        username = filled["username"] or username
+        url = filled["url"] or url
+        notes = filled["notes"] or notes
+        form_secret = filled["secret"]
+        generate_ = False  # ctrl+g already put a generated secret in the field
 
     data: dict[str, str] = {}
     secret_field = PRIMARY_FIELD[type_]
     if type_ == "note":
-        text = notes if notes is not None else edit_text("", suffix=".txt")
+        # A note typed into the form's `secret` field is the note: whichever of
+        # the two rows it was written on, it is the same text. $EDITOR opens only
+        # when neither holds anything.
+        text = notes if notes is not None else (form_secret or edit_text("", suffix=".txt"))
         if not text:
             raise click.ClickException("empty note — nothing saved")
         data["notes"] = text
         notes = None
+    elif form_secret is not None:
+        if not form_secret:
+            raise click.ClickException("empty secret — nothing saved")
+        data[secret_field] = form_secret
     elif generate_:
         data[secret_field] = generate_password(length, symbols=not no_symbols)
     else:
@@ -303,16 +496,20 @@ def add(name, type_, username, url, notes, generate_, length, no_symbols, show, 
 
 
 @main.command()
-@click.argument("name")
+@click.argument("name", required=False)
 @click.option("--field", "-f", "field", default=None, help="Field to output (default: the secret).")
 @click.option("--copy", "-c", "copy_", is_flag=True, help="Copy to clipboard instead of printing.")
 @friendly_errors
-def get(name: str, field: str | None, copy_: bool) -> None:
-    """Print (or copy) an entry's secret. Script-friendly: value only, to stdout."""
+def get(name: str | None, field: str | None, copy_: bool) -> None:
+    """Print (or copy) an entry's secret. Script-friendly: value only, to stdout.
+
+    \b
+      sekrt get cloud/aws-key        # exact name
+      sekrt get aws                  # partial: pick from the matches
+      sekrt get                      # pick from every entry
+    """
     vault = get_vault()
-    if not vault.exists(name):
-        raise click.ClickException(f"no entry named {name!r}{_suggest(vault, name)}")
-    key = obtain_key(vault)
+    name, key = resolve_entry(vault, name, action="print")
     entry = vault.read(key, name)
     field = field or primary_field(entry)
     if field is None or field not in entry["data"]:
@@ -326,35 +523,93 @@ def get(name: str, field: str | None, copy_: bool) -> None:
         click.echo(value)
 
 
+def _secret_block(field: str, value: str) -> None:
+    """Print a revealed secret set apart, alone on its lines, at column 0.
+
+    Nothing shares a line with a secret: a double- or triple-click selects the
+    value and nothing else, and a revealed SSH key comes out pasteable rather
+    than indented into something that is no longer an SSH key.
+    """
+    click.echo()
+    click.secho(f"  {field}:", dim=True)
+    for line in value.split("\n"):
+        click.echo(line)
+
+
+def _copy_target(entry: dict, secrets: list[tuple[str, str]]) -> tuple[str, str]:
+    """Which revealed secret `c` copies: the entry's main one, else the first."""
+    main = primary_field(entry)
+    return next((pair for pair in secrets if pair[0] == main), secrets[0])
+
+
+def _at_terminal() -> bool:
+    """Is there a terminal on stderr to prompt on?"""
+    try:
+        return sys.stderr.isatty()
+    except (AttributeError, ValueError):  # closed or replaced streams
+        return False
+
+
+def _offer_copy(field: str, value: str) -> None:
+    """A `press c to copy` prompt under the secret, when there is a terminal.
+
+    The prompt and its answer are stderr-only and erase themselves, so what
+    stays on screen (and in a redirect) is the secret alone.
+    """
+    if not _at_terminal() or not clipboard.available():
+        return
+    click.secho(f"\n  press c to copy {field} · any other key to dismiss",
+                dim=True, err=True, nl=False)
+    key = clipboard.read_key()
+    click.echo("\r\x1b[2K", nl=False, err=True)  # take the prompt line back
+    if key and key.lower() == "c":
+        clipboard.copy(value)
+        click.secho(f"  ✔ {field} copied to clipboard (clears in 45s)", fg="green", err=True)
+
+
 @main.command()
-@click.argument("name")
+@click.argument("name", required=False)
 @click.option("--reveal", "-r", is_flag=True, help="Show secret fields in clear text.")
 @friendly_errors
-def show(name: str, reveal: bool) -> None:
-    """Show all fields of an entry (secrets masked unless --reveal)."""
+def show(name: str | None, reveal: bool) -> None:
+    """Show all fields of an entry (secrets masked unless --reveal).
+
+    Revealed secrets come last, each on a line of its own, and at a terminal
+    `c` copies the main one to the clipboard.
+
+    With no NAME (or a partial one) an inline picker lists the vault.
+    """
     vault = get_vault()
-    if not vault.exists(name):
-        raise click.ClickException(f"no entry named {name!r}{_suggest(vault, name)}")
-    key = obtain_key(vault)
+    name, key = resolve_entry(vault, name, action="show")
     entry = vault.read(key, name)
     click.secho(name, bold=True)
     click.echo(f"  type: {entry['type']}")
+
+    secrets: list[tuple[str, str]] = []  # revealed secrets, kept for the end
     for field, value in entry["data"].items():
         if field == "content_b64":
             size = entry["data"].get("size", "?")
             click.echo(f"  content: ({size} bytes — use `sekrt file get {name}`)")
             continue
-        hidden = field in SENSITIVE_FIELDS and not reveal
         value = _printable(value)
-        if "\n" in value:
-            if hidden:
+        if field in SENSITIVE_FIELDS:
+            if reveal:
+                secrets.append((field, value))
+            elif "\n" in value:
                 click.echo(f"  {field}: ({len(value.splitlines())} lines — use --reveal)")
             else:
-                click.echo(f"  {field}:")
-                for line in value.splitlines():
-                    click.echo(f"    {line}")
+                click.echo(f"  {field}: {MASK}")
+        elif "\n" in value:
+            click.echo(f"  {field}:")
+            for line in value.splitlines():
+                click.echo(f"    {line}")
         else:
-            click.echo(f"  {field}: {MASK if hidden else value}")
+            click.echo(f"  {field}: {value}")
+
+    for field, value in secrets:
+        _secret_block(field, value)
+    if secrets:
+        _offer_copy(*_copy_target(entry, secrets))
 
 
 @main.command()
@@ -383,18 +638,17 @@ def find(query: str) -> None:
 
 
 @main.command()
-@click.argument("name")
+@click.argument("name", required=False)
 @friendly_errors
-def edit(name: str) -> None:
+def edit(name: str | None) -> None:
     """Edit an entry's fields in $EDITOR.
 
     A note's text is edited raw (multiline, no JSON escaping); every other
-    type is edited as its JSON field dict.
+    type is edited as its JSON field dict. With no NAME (or a partial one) an
+    inline picker lists the vault.
     """
     vault = get_vault()
-    if not vault.exists(name):
-        raise click.ClickException(f"no entry named {name!r}{_suggest(vault, name)}")
-    key = obtain_key(vault)
+    name, key = resolve_entry(vault, name, action="edit")
     entry = vault.read(key, name)
 
     if entry["type"] == "note":
@@ -436,14 +690,13 @@ def mv(old: str, new: str, force: bool) -> None:
 
 
 @main.command()
-@click.argument("name")
+@click.argument("name", required=False)
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation.")
 @friendly_errors
-def rm(name: str, force: bool) -> None:
-    """Delete an entry."""
+def rm(name: str | None, force: bool) -> None:
+    """Delete an entry (picked inline when NAME is omitted or partial)."""
     vault = get_vault()
-    if not vault.exists(name):
-        raise click.ClickException(f"no entry named {name!r}{_suggest(vault, name)}")
+    name = resolve_name(vault, name, action="delete")
     if not force and not click.confirm(f"Delete {name!r}?"):
         return
     vault.delete(name)
@@ -604,6 +857,244 @@ def env_rm(file: str, force: bool) -> None:
     click.secho(f"✔ removed {name}", fg="green")
 
 
+# --------------------------------------------------------------------------- run
+
+
+def expose_options(f):
+    """The options that decide what a wrapped process gets to see.
+
+    Shared by `run` and `shell`, which differ only in what they then start.
+    """
+    for option in reversed([
+        click.option("--var", "-e", "requested", multiple=True, metavar="VAR[=ENTRY]",
+                     help="Expose only VAR (optionally naming the entry it comes from). "
+                          "Repeatable."),
+        click.option("--repo", "slug", default=None,
+                     help="Use another repo's stored env files (slug like github.com/you/proj)."),
+        click.option("--no-env-files", is_flag=True,
+                     help="Expose only what -e asks for, not this repo's stored .env files."),
+        click.option("--dry-run", "-n", "dry_run", is_flag=True,
+                     help="List what would be exposed (names only) and stop."),
+    ]):
+        f = option(f)
+    return f
+
+
+def _exposures(
+    vault: Vault,
+    requested: tuple[str, ...],
+    slug: str | None,
+    no_env_files: bool,
+    referenced: list[str] | None = None,
+) -> tuple[list[runtools.Exposure], list[tuple[str, str]]]:
+    """Decrypt what the command asked for, and nothing else.
+
+    Whether there is anything to expose at all is settled from entry *names*,
+    which are plaintext — so a command that was never going to get a variable
+    says so instead of asking for the passphrase first.
+    """
+    referenced = referenced or []
+    slug = slug or envtools.current_context()[1]
+    stored = [] if no_env_files else envtools.stored_files(vault, slug)
+    if not requested and not referenced and not stored and not runtools.might_expose(vault):
+        raise click.ClickException(
+            "nothing to expose — the vault holds no password or API key entries"
+            + (f", and no env files are stored for {slug!r}" if not no_env_files else "")
+            + ".\n  add one with `sekrt add`, or store this repo's env file with "
+            "`sekrt env push`"
+        )
+
+    key = obtain_key(vault)
+    resolver = runtools.Resolver(vault, key, slug=slug, env_files=not no_env_files)
+    exposures, unresolved = runtools.resolve(
+        resolver, requested=requested, referenced=referenced
+    )
+    if not exposures:
+        raise click.ClickException(
+            "nothing to expose — no entry here holds a value a variable could carry "
+            "(notes, SSH keys and stored files do not), and no stored env file "
+            f"for {slug!r} defines one"
+        )
+    for var, names in resolver.ambiguous.items():
+        click.secho(
+            f"note: ${var} left unset — {' and '.join(names)} both answer to it. "
+            f"Pick one with `-e {var}={names[0]}`.",
+            fg="yellow",
+            err=True,
+        )
+    return exposures, unresolved
+
+
+def _echo_plan(exposures: list[runtools.Exposure], argv: list[str]) -> None:
+    """`--dry-run`: every variable and where it comes from, values left out of it."""
+    for exposure in exposures:
+        click.echo(f"{exposure.var:<24}{exposure.origin}")
+    click.echo(f"\nwould run: {' '.join(argv)}")
+
+
+def _warn_unresolved(unresolved: list[tuple[str, str]]) -> None:
+    """Mention names the command refers to that the vault could not answer.
+
+    Not fatal: a shell command is free to use variables of its own making, and
+    the command runs with the ones that *did* resolve. It is worth saying out
+    loud, though — this is what a mistyped variable name looks like.
+    """
+    for _, message in unresolved:
+        click.secho(f"note: {message}", fg="yellow", err=True)
+
+
+def _warn_swallowed(shell_command: str) -> None:
+    """A `-c` string with no `$` left in it: the calling shell probably ate the reference.
+
+    `sekrt run -c "echo $MY_TOKEN"` — double quotes — is expanded by the shell
+    that runs sekrt, before sekrt exists, so what arrives is `echo ` and the
+    command prints nothing at all. Nothing in the string can prove that is what
+    happened, but a `-c` with no reference left in it had no reason to want a
+    shell, and a silently empty value is the worst way to find out.
+    """
+    if "$" in shell_command:
+        return
+    click.secho(
+        'note: that command refers to no variable — if you wrote "$VAR" in double '
+        "quotes,\n"
+        "      your own shell expanded it before sekrt ran. Single-quote it instead:\n"
+        "        sekrt run -c 'svc --token=\"$VAR\"'",
+        fg="yellow",
+        err=True,
+    )
+
+
+def _warn_unexpanded(command: tuple[str, ...], exposures: list[runtools.Exposure]) -> None:
+    """Catch `sekrt run -- svc --token='$MY_TOKEN'`, where nothing expands the text.
+
+    sekrt deliberately does not substitute into a command line — a value written
+    into argv is world-readable in `ps` — so a quoted reference arrives at the
+    program as the literal characters. The two ways to actually get the value are
+    right here rather than in a debugging session.
+
+    A shell being handed a command (`sekrt run -- sh -c '… $VAR …'`) expands its
+    own references, and is not warned about.
+    """
+    if runtools.is_shell_command(command):
+        return
+    exposed = {exposure.var for exposure in exposures}
+    hits = [var for var in runtools.references(" ".join(command)) if var in exposed]
+    if hits:
+        click.secho(
+            f"note: ${hits[0]} reached the command as text — sekrt never writes a secret "
+            f"into a command line (`ps` can read those).\n"
+            f"      the program can read {hits[0]} from its environment, or let a shell "
+            f"expand it:  sekrt run -c '… ${hits[0]} …'",
+            fg="yellow",
+            err=True,
+        )
+        return
+
+    empty = runtools.swallowed_args(command)
+    if empty:
+        click.secho(
+            f"note: {', '.join(repr(arg) for arg in empty[:2])} looks like a variable your "
+            "own shell expanded\n"
+            "      away before sekrt ran — it expands what you type, and only sekrt's own "
+            "child\n"
+            "      knows the value. Single-quote it and let a shell do it:\n"
+            "        sekrt run -c 'svc --token=\"$VAR\"'\n"
+            "      or check what the command will see:  sekrt run -- printenv VAR",
+            fg="yellow",
+            err=True,
+        )
+
+
+@main.command(context_settings={"ignore_unknown_options": True, "allow_interspersed_args": False})
+@click.argument("command", nargs=-1, type=click.UNPROCESSED)
+@click.option("--shell", "-c", "shell_command", default=None, metavar="STRING",
+              help="Run STRING through $SHELL, which expands $VAR references in it.")
+@expose_options
+@friendly_errors
+def run(command, shell_command, requested, slug, no_env_files, dry_run) -> None:
+    """Run one command with vault secrets in its environment, and nowhere else.
+
+    The secrets exist only in the environment of the process sekrt starts: they
+    are never written to disk, never put in your shell, and gone when the command
+    exits.
+
+    With nothing named, the command gets every password and API key in the vault
+    — each under the variable its name reads as, so `api/my-token` becomes
+    $MY_TOKEN — plus whatever this repository stored with `sekrt env push`. Name
+    variables with -e to hand over those and nothing else.
+
+    \b
+      sekrt run -- npm start                        # everything, like a loaded .env
+      sekrt run -n -- npm start                     # ...see exactly what that is
+      sekrt run -e MY_TOKEN -- service log          # only this one
+      sekrt run -e MY_TOKEN=work/api-token -- svc   # ...from a named entry
+      sekrt run -c 'service log --token="$MY_TOKEN"'   # a shell expands it
+      sekrt run -- printenv MY_TOKEN                # what the command will see
+    \b
+    Use -- before a command that has flags of its own. Note that YOUR shell
+    expands what you type before sekrt runs, so `-- echo $MY_TOKEN` prints
+    nothing: single-quote it into -c, or let the program read its environment.
+    For a whole session rather than one command, see `sekrt shell`.
+    """
+    if bool(command) == bool(shell_command):
+        raise click.ClickException(
+            "give a command to run:\n"
+            "  sekrt run -- service log\n"
+            "  sekrt run -c 'service log --token=\"$MY_TOKEN\"'\n"
+            "  sekrt shell                (a whole session instead of one command)"
+        )
+    vault = get_vault()
+    referenced = runtools.references(shell_command) if shell_command else []
+    exposures, unresolved = _exposures(vault, requested, slug, no_env_files, referenced)
+    argv = runtools.shell_argv(shell_command) if shell_command else list(command)
+
+    if shell_command and not referenced:
+        _warn_swallowed(shell_command)
+    if dry_run:
+        _echo_plan(exposures, argv)
+        return
+    _warn_unresolved(unresolved)
+    if command:
+        _warn_unexpanded(command, exposures)
+    raise SystemExit(runtools.launch(argv, runtools.child_env(exposures)))
+
+
+@main.command()
+@expose_options
+@friendly_errors
+def shell(requested, slug, no_env_files, dry_run) -> None:
+    """Open a subshell holding vault secrets; they are gone when you `exit`.
+
+    "Expose my tokens for a bit", bounded: the variables live in that shell and
+    whatever you start from it, and nothing outside it. Chosen exactly as for
+    `sekrt run` — everything the vault can offer, narrowed by -e.
+
+    \b
+      sekrt shell                        # every password and API key, + this repo's
+      sekrt shell -e MY_TOKEN            # only this one
+      sekrt shell -n                     # what would be exposed, without opening it
+      exit                               # ...and they are gone
+    """
+    vault = get_vault()
+    exposures, _ = _exposures(vault, requested, slug, no_env_files)
+
+    if dry_run:
+        _echo_plan(exposures, [runtools.default_shell()])
+        return
+    # Count and consequence on the first line, names on the second: a vault with
+    # twenty tokens should wrap the list, not the sentence explaining it.
+    count = len(exposures)
+    click.secho(
+        f"✔ {count} variable{'' if count == 1 else 's'} exposed in this subshell — "
+        f"{runtools.SHELL_BADGE} in the prompt until you `exit`",
+        fg="green",
+        err=True,
+    )
+    click.secho("  " + ", ".join(exposure.var for exposure in exposures), dim=True, err=True)
+    argv, wiring = runtools.shell_launch()
+    raise SystemExit(runtools.launch(argv, runtools.child_env(exposures) | wiring))
+
+
 # --------------------------------------------------------------------------- ssh
 
 
@@ -612,20 +1103,52 @@ def ssh() -> None:
     """Store, generate and restore SSH keypairs."""
 
 
+SSH_SOURCES = ("generate", "import")
+
+
+def _ssh_form(name: str | None) -> dict[str, str]:
+    """`generate a key` vs `import that file`, as two rows rather than two flags."""
+    from sekrt.tui import form
+
+    return _fill(
+        [
+            form.Field("name", "name", placeholder="deploy-key", value=name or "",
+                       required=True),
+            form.Field("source", "source", choices=SSH_SOURCES),
+            form.Field("key", "key file", placeholder="~/.ssh/id_ed25519  (import only)"),
+            form.Field("comment", "comment", placeholder="optional"),
+        ],
+        title="new ssh key",
+    )
+
+
 @ssh.command("add")
-@click.argument("name")
+@click.argument("name", required=False)
 @click.option("--key", "key_path", type=click.Path(path_type=Path), default=None,
               help="Existing private key to import (e.g. ~/.ssh/id_ed25519).")
 @click.option("--generate", "-g", "generate_", is_flag=True, help="Generate a new ed25519 key.")
 @click.option("--comment", default="", help="Key comment (shown in .pub).")
 @click.option("--force", "-f", is_flag=True, help="Overwrite an existing entry.")
+@click.option("--interactive", "-i", is_flag=True, help="Fill the inline form even with a NAME.")
 @friendly_errors
-def ssh_add(name, key_path, generate_, comment, force) -> None:
-    """Import or generate an SSH keypair into the vault."""
+def ssh_add(name, key_path, generate_, comment, force, interactive) -> None:
+    """Import or generate an SSH keypair into the vault.
+
+    With no NAME (or with -i) an inline form asks for the name, whether to
+    generate or import, and the key file if importing.
+    """
+    vault = get_vault()
+    wants_form = use_form(name, interactive)  # see `add`: checks, passphrase, form
+    key = obtain_key(vault)
+    if wants_form:
+        filled = _ssh_form(name)
+        name, comment = filled["name"], filled["comment"] or comment
+        generate_ = filled["source"] == "generate"
+        key_path = None if generate_ else Path(filled["key"] or "")
+        if not generate_ and not filled["key"]:
+            raise click.ClickException("importing needs a key file — nothing saved")
     if bool(key_path) == generate_:
         raise click.ClickException("choose exactly one of --key PATH or --generate")
-    vault = get_vault()
-    key = obtain_key(vault)
     if generate_:
         comment = comment or f"{name}@sekrt"
         private, public = sshtools.generate_ed25519(comment)
@@ -733,6 +1256,106 @@ def file_ls() -> None:
     vault = get_vault()
     for name in vault.list_entries(f"{filetools.FILE_PREFIX}/"):
         click.echo(name[len(filetools.FILE_PREFIX) + 1 :])
+
+
+# --------------------------------------------------------------------------- colors
+
+
+def _swatch(color: str) -> str:
+    """A block of *color* itself — click drops the styling when it isn't a terminal."""
+    return click.style("███", fg=_rgb(color))
+
+
+def _chip(name: str, palette: prefs.Palette) -> str:
+    """A preset as its three colors, then its name."""
+    blocks = "".join(click.style("█", fg=_rgb(color)) for color in palette.to_dict().values())
+    return f"{blocks} {name}"
+
+
+def _echo_palette(palette: prefs.Palette) -> None:
+    for role in prefs.ROLES:
+        color = getattr(palette, role)
+        click.echo(f"{role:<10}{color}  {_swatch(color)}  {prefs.ROLE_BLURBS[role]}")
+    click.echo(f"{'preset':<10}{prefs.preset_name(palette) or '(custom)'}")
+    path = prefs.prefs_path()
+    saved = path.is_file()
+    click.echo(f"\nstored in {path}" + ("" if saved else " (nothing saved yet — stock colors)"))
+
+
+def _echo_presets() -> None:
+    """The presets as rows of colored chips — the same rows the panel shows."""
+    click.echo()
+    for start in range(0, len(prefs.PRESET_NAMES), prefs.PRESETS_PER_ROW):
+        row = prefs.PRESET_NAMES[start : start + prefs.PRESETS_PER_ROW]
+        label = "presets" if start == 0 else ""
+        chips = "  ".join(_chip(name, prefs.PRESETS[name]) for name in row)
+        click.echo(f"{label:<10}{chips}")
+    click.echo("          pick one with `sekrt config --preset NAME`, or run `sekrt config`")
+
+
+@main.command()
+@click.option("--preset", "preset_", type=click.Choice(prefs.PRESET_NAMES), default=None,
+              help="Use a ready-made palette.")
+@click.option("--primary", default=None, metavar="COLOR", help="Borders, titles, entry names.")
+@click.option("--secondary", default=None, metavar="COLOR", help="Hints and muted text.")
+@click.option("--accent", default=None, metavar="COLOR", help="Cursor, key hints, highlights.")
+@click.option("--show", "show_", is_flag=True, help="Print the current colors and exit.")
+@click.option("--reset", is_flag=True, help="Go back to the stock metal-and-red palette.")
+@friendly_errors
+def config(preset_, primary, secondary, accent, show_, reset) -> None:
+    """Choose the colors the TUI and the picker draw themselves in.
+
+    With no options at a terminal this opens a few lines of inline panel: ←/→
+    walks the ready-made palettes and applies each as you land on it, and the
+    three fields underneath are there when you'd rather name a color yourself
+    (hex like `#00d7af` or `0d7`, or a name like `cyan`). The dark background is
+    fixed — it is what keeps an accent readable.
+
+    \b
+      sekrt config                       # the panel
+      sekrt config --preset teal         # a ready-made palette, no panel
+      sekrt config --accent '#00d7af'    # set one color
+      sekrt config --show                # what is set right now, and the presets
+      sekrt config --reset               # back to metal & red
+    """
+    chosen = {"primary": primary, "secondary": secondary, "accent": accent}
+    given = {role: value for role, value in chosen.items() if value is not None}
+
+    if reset:
+        if given or preset_:
+            raise click.ClickException("--reset sets everything back — pass it on its own")
+        prefs.reset_palette()
+        click.secho("✔ colors reset", fg="green")
+        _echo_palette(prefs.DEFAULT_PALETTE)
+        return
+
+    # A preset is a starting point: --preset teal --accent red keeps the accent.
+    palette = prefs.preset(preset_) if preset_ else prefs.load_palette()
+
+    if given or preset_:
+        for role, value in given.items():
+            palette = palette.with_color(role, value)
+        path = prefs.save_palette(palette)
+        click.secho(f"✔ colors saved to {path}", fg="green")
+        _echo_palette(palette)
+        return
+
+    from sekrt.tui import picker
+
+    if show_ or not picker.interactive():
+        _echo_palette(palette)
+        _echo_presets()
+        return
+
+    from sekrt.tui.colors import edit_palette
+
+    picked = edit_palette(palette)
+    if picked is None or picked == palette:
+        click.echo("colors unchanged")
+        return
+    path = prefs.save_palette(picked)
+    click.secho(f"✔ colors saved to {path}", fg="green")
+    _echo_palette(picked)
 
 
 # --------------------------------------------------------------------------- tui

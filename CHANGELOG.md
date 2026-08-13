@@ -4,6 +4,90 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/) and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `sekrt run` and `sekrt shell`: hand a command your secrets in its environment
+  only, for exactly as long as it runs. `sekrt run -- npm start` exposes every
+  password and API key in the vault, each under the variable its name reads as
+  (`api/my-token` becomes `$MY_TOKEN`), plus whatever this repository stored with
+  `sekrt env push` — which wins where the names collide. Notes, SSH keys and
+  stored files are left out (prose, a key file and a blob of bytes are not what a
+  variable carries), as is a variable two entries both answer to, which is
+  reported instead of guessed at. `-e MY_TOKEN` *narrows* the exposure to that
+  one, `-e MY_TOKEN=work/api-token` names the entry outright, and
+  `--no-env-files` drops the repository's own — together, a command that gets one
+  secret and nothing else.
+  `sekrt run -c 'service log --token="$MY_TOKEN"'` hands the string to `$SHELL`,
+  which is what expands the reference — sekrt never substitutes a secret into a
+  command line, since `argv` is world-readable in `ps`, and it says so when a
+  quoted reference reaches the direct form as text, when a `-c` string reaches it
+  with no reference left in it, or when an argument arrives shaped like one the
+  calling shell ate (a leftover `--token=`, an empty argument) — all signatures
+  of a reference expanded away by the shell that typed it, before sekrt existed.
+  `sekrt shell` opens a subshell holding the same variables, where `exit` revokes
+  them, and marks its prompt with a 🔓 so a shell holding secrets never looks like
+  an ordinary one — through the shell's own startup files (a generated rc for
+  bash, `ZDOTDIR` for zsh, `--init-command` for fish), which sources your real
+  config first and hooks the prompt after it, so a theme that rebuilds the prompt
+  every line keeps the badge and aliases, functions and history are untouched.
+  Any other shell opens unmarked, with `$SEKRT_EXPOSED` there to build an
+  indicator from. Nothing is written to disk or left in the calling shell, and
+  `$SEKRT_PASSPHRASE` is stripped from the child, so a wrapped command cannot
+  decrypt anything it was not handed. `--dry-run` lists the variables and where
+  each comes from without printing a value — worth a look, since the default
+  exposure is broad; `--repo` borrows another repo's stored files;
+  `$SEKRT_EXPOSED` carries the names for a shell prompt to show. Aliases:
+  `sekrt exec`, `sekrt sh`.
+- Inline forms for the two commands with the most flags. `sekrt add` and
+  `sekrt ssh add` without a NAME (or with `-i`, which starts from what you
+  already typed) open a few lines of form under the prompt instead: labelled
+  fields, `tab`/`↑↓` between them, `←`/`→` on the rows that are a choice
+  (password / api key / note, generate / import), `ctrl+g` to fill in a
+  generated secret, `enter` to save, `esc` to leave. Like the picker they draw
+  on stderr and claim only the lines they need, and where there is no terminal
+  both commands still insist on their arguments.
+- Customizable colors. `sekrt config` opens a small inline panel: a row of
+  ready-made palettes — `metal`, `teal`, `amber`, `indigo`, `magenta`, `mono`,
+  `matrix`, `ice`, `violet`, `rose`, `sepia`, one per hue — that `←`/`→` walks
+  and applies as you land on each one, and three fields (`primary`,
+  `secondary`, `accent`) underneath for naming a color yourself.
+  Everything — swatches, preview, the panel's own chrome — repaints live;
+  `enter` saves, `esc` leaves it as it was, `ctrl+r` restores the stock
+  metal-and-red. The preset row deselects itself once a hand-typed color takes
+  the palette off all eleven, and re-selects when one is typed back onto. The
+  same editor is bound to `t` in the TUI, where the interface behind it recolors
+  live and `esc` puts the old palette back. Non-interactively:
+  `sekrt config --preset teal`, `--accent '#00d7af'` (they compose), `--show`,
+  `--reset` (aliases: `sekrt colors`, `sekrt theme`). Values can be hex
+  (`#00d7af`, `0d7`) or CSS names (`cyan`); the dark background stays fixed,
+  since it is what keeps an arbitrary accent readable. The palette is stored in
+  `~/.config/sekrt/config.json` (`$SEKRT_CONFIG` overrides) rather than in the
+  vault, so recoloring is not a commit and each machine can differ. A config
+  file that has been hand-edited into nonsense costs the colors it broke and
+  nothing else.
+- An inline picker for entry names: `get`, `show`, `edit` and `rm` accept a
+  partial NAME (or none at all) and open a few lines of fuzzy-filtered list
+  under the shell prompt instead of failing. The passphrase is asked for
+  before the list appears, and the picker draws on stderr, so
+  `sekrt get | pbcopy` still pipes the secret and nothing else; without a
+  terminal (pipes, cron, CI) the commands still require an exact NAME.
+- `sekrt show --reveal` offers `press c to copy` at a terminal: `c` puts the
+  entry's main secret on the clipboard (cleared after 45s), any other key —
+  or 20 seconds of silence — dismisses it. The prompt is stderr-only and
+  erases itself, and there is no prompt where there is no terminal.
+
+### Changed
+- The unlock prompt is `🔐 passphrase ❯` in your own colors (`sekrt config`)
+  rather than a bare `Passphrase:`, with the failed attempts counted down
+  (`✗ wrong passphrase — 2 tries left`). It names the vault when `$SEKRT_VAULT`
+  points at one (`🔐 passphrase sekrt-dev ❯`), so a scratch vault is not mistaken
+  for the real one, and stays unstyled where there is no terminal to show it.
+- `sekrt show --reveal` lays a revealed secret out to be copied: secrets come
+  last, after the metadata, each alone on an unindented line of its own. A
+  double- or triple-click now selects the value and nothing else, and a
+  revealed SSH key is pasteable instead of indented four spaces.
+
 ## [0.2.0] - unreleased
 
 ### Added
