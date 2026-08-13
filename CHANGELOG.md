@@ -8,7 +8,7 @@ project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - `sekrt run` and `sekrt shell`: hand a command your secrets in its environment
-  only, for exactly as long as it runs. `sekrt run -- npm start` exposes every
+  only, for exactly as long as it runs. `sekrt run 'npm start'` exposes every
   password and API key in the vault, each under the variable its name reads as
   (`api/my-token` becomes `$MY_TOKEN`), plus whatever this repository stored with
   `sekrt env push` — which wins where the names collide. Notes, SSH keys and
@@ -18,21 +18,26 @@ project adheres to [Semantic Versioning](https://semver.org/).
   one, `-e MY_TOKEN=work/api-token` names the entry outright, and
   `--no-env-files` drops the repository's own — together, a command that gets one
   secret and nothing else.
-  `sekrt run -c 'service log --token="$MY_TOKEN"'` hands the string to `$SHELL`,
-  which is what expands the reference — sekrt never substitutes a secret into a
-  command line, since `argv` is world-readable in `ps`, and it says so when a
-  quoted reference reaches the direct form as text, when a `-c` string reaches it
-  with no reference left in it, or when an argument arrives shaped like one the
-  calling shell ate (a leftover `--token=`, an empty argument) — all signatures
-  of a reference expanded away by the shell that typed it, before sekrt existed.
+  A command quoted into one argument —
+  `sekrt run 'service log --token="$MY_TOKEN"'` — goes to `$SHELL`, which is what
+  expands the reference; several arguments (`sekrt run -- npm start`) are run
+  directly, with no shell in the way. sekrt tells the two apart from what you
+  typed, so nothing has to be flagged as one or the other. It never substitutes a
+  secret into a command line, since `argv` is world-readable in `ps`, and it says
+  so when a quoted reference reaches the direct form as text, or when a command
+  arrives with the hole an expanded-away reference leaves behind (a leftover
+  `--token=`, a trailing space, an empty argument) — signatures of a reference
+  eaten by the shell that typed it, before sekrt existed.
   `sekrt shell` opens a subshell holding the same variables, where `exit` revokes
-  them, and marks its prompt with a 🔓 so a shell holding secrets never looks like
+  them, and tags its prompt `(sekrt)` so a shell holding secrets never looks like
   an ordinary one — through the shell's own startup files (a generated rc for
   bash, `ZDOTDIR` for zsh, `--init-command` for fish), which sources your real
   config first and hooks the prompt after it, so a theme that rebuilds the prompt
-  every line keeps the badge and aliases, functions and history are untouched.
-  Any other shell opens unmarked, with `$SEKRT_EXPOSED` there to build an
-  indicator from. Nothing is written to disk or left in the calling shell, and
+  every line keeps the tag, and aliases, functions and history are untouched.
+  Any other shell opens untagged, with `$SEKRT_EXPOSED` there to build an
+  indicator from. The tag is plain ASCII on purpose: an emoji in a prompt is two
+  display cells the shell counts as one character, which misplaces the cursor on
+  a long edited line. Nothing is written to disk or left in the calling shell, and
   `$SEKRT_PASSPHRASE` is stripped from the child, so a wrapped command cannot
   decrypt anything it was not handed. `--dry-run` lists the variables and where
   each comes from without printing a value — worth a look, since the default

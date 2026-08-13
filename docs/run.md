@@ -64,14 +64,14 @@ it says.
 runs nothing:
 
 ```console
-$ sekrt run -n -- npm start
+$ sekrt run -n 'npm start'
 AWS_ACCESS_KEY          cloud/aws-access-key:key
 DATABASE_URL            env/github.com/you/my-saas/.env
 GITHUB_TOKEN            work/github-token:key
 PORT                    env/github.com/you/my-saas/.env
 UV_PUBLISH_TOKEN        tokens/uv-publish-token:key
 
-would run: npm start
+would run: /bin/zsh -c npm start
 ```
 
 ## Narrowing it
@@ -79,9 +79,9 @@ would run: npm start
 `-e` is the switch: name variables and those are what the command gets.
 
 ```bash
-sekrt run -e UV_PUBLISH_TOKEN -- uv publish             # this one + the repo's .env
-sekrt run -e TOKEN=work/github-token -- gh pr list      # this one, from that entry
-sekrt run -e UV_PUBLISH_TOKEN --no-env-files -- uv publish   # this one, alone
+sekrt run -e UV_PUBLISH_TOKEN 'uv publish'              # this one + the repo's .env
+sekrt run -e TOKEN=work/github-token 'gh pr list'       # this one, from that entry
+sekrt run -e UV_PUBLISH_TOKEN --no-env-files 'uv publish'    # this one, alone
 ```
 
 - `-e VAR` — take `VAR` from wherever it resolves (repo env file, then the entry
@@ -103,19 +103,27 @@ sekrt runs.** Only sekrt's *child* knows the values, so only a shell inside that
 child can expand a reference to one.
 
 ```bash
-sekrt run -- echo $MY_TOKEN       # ✗ your shell drops it; sekrt gets bare `echo`
-sekrt run -c "echo $MY_TOKEN"     # ✗ double quotes; sekrt gets `echo `
-sekrt run -c 'echo $MY_TOKEN'     # ✓ single quotes: sekrt's shell expands it
+sekrt run echo $MY_TOKEN          # ✗ your shell drops it; sekrt gets bare `echo`
+sekrt run "echo $MY_TOKEN"        # ✗ double quotes; sekrt gets `echo `
+sekrt run 'echo $MY_TOKEN'        # ✓ single quotes: sekrt's shell expands it
 sekrt run -- printenv MY_TOKEN    # ✓ and this is how to check it landed
 ```
 
 The two forms, and when to reach for each:
 
-- **`sekrt run -- CMD`** runs `CMD` directly, with the variables in its
-  environment. Most programs read their configuration from there, and this form
-  involves no shell at all — nothing to quote, nothing to escape.
-- **`sekrt run -c 'STRING'`** hands `STRING` to `$SHELL`. Use it when the command
-  interpolates the value into its own arguments, or when you want a pipeline.
+- **`sekrt run 'STRING'`** — a command quoted into one argument — hands `STRING`
+  to `$SHELL`, which is what expands `$VAR` in it. This is the form to type, and
+  the one that works when the command interpolates the value into its own
+  arguments, or when you want a pipeline.
+- **`sekrt run -- CMD ARGS...`** runs `CMD` directly, with the variables in its
+  environment and no shell at all — nothing to quote, nothing to escape. Put `--`
+  first, so `CMD`'s own flags are not read as sekrt's.
+
+sekrt tells them apart by looking at what you typed: one argument holding a
+space, a `$`, a quote, a pipe or a redirect was written for a shell; anything
+else is a program and its arguments. `sekrt run make` and `sekrt run -- make`
+are the same thing, and `-c` still forces the shell form for the rare string
+that has none of those characters.
 
 sekrt never substitutes a secret into a command line itself, in either form: a
 value in `argv` is readable by anyone who can run `ps`. It does call out the
@@ -126,7 +134,7 @@ $ sekrt run -e MY_TOKEN -- service log --token='$MY_TOKEN'
 note: $MY_TOKEN reached the command as text — sekrt never writes a secret into a
       command line (`ps` can read those).
       the program can read MY_TOKEN from its environment, or let a shell expand
-      it:  sekrt run -c '… $MY_TOKEN …'
+      it:  sekrt run '… $MY_TOKEN …'
 ```
 
 ```console
@@ -134,13 +142,14 @@ $ sekrt run -- service --token=$MY_TOKEN
 note: '--token=' looks like a variable your own shell expanded
       away before sekrt ran — it expands what you type, and only sekrt's own child
       knows the value. Single-quote it and let a shell do it:
-        sekrt run -c 'svc --token="$VAR"'
+        sekrt run 'svc --token="$VAR"'
       or check what the command will see:  sekrt run -- printenv VAR
 ```
 
-A `-c` string that arrives with no `$` left in it gets the same treatment. The
-one case nothing can catch is `-- echo $MY_TOKEN` unquoted: an unset unquoted
-variable removes the argument altogether, leaving nothing behind to notice.
+A quoted command arriving with a hole in it — a trailing space, a gap of two, an
+argument ending in `=` — gets the same treatment. The one case nothing can catch
+is `sekrt run echo $MY_TOKEN` unquoted: an unset unquoted variable removes the
+argument altogether, leaving nothing behind to notice.
 
 ## A whole session
 
@@ -148,22 +157,25 @@ When one command isn't the shape of the work:
 
 ```console
 $ sekrt shell
-✔ 5 variables exposed in this subshell — 🔓 in the prompt until you `exit`
+✔ 5 variables exposed in this subshell — the prompt says (sekrt) until you `exit`
   AWS_ACCESS_KEY, DATABASE_URL, GITHUB_TOKEN, PORT, UV_PUBLISH_TOKEN
-🔓 ~/code/my-saas ❯ uv publish            # ordinary shell, ordinary expansion
-🔓 ~/code/my-saas ❯ echo $UV_PUBLISH_TOKEN   # ordinary quoting rules, too
-🔓 ~/code/my-saas ❯ exit
+(sekrt) ~/code/my-saas ❯ uv publish            # ordinary shell, ordinary expansion
+(sekrt) ~/code/my-saas ❯ echo $UV_PUBLISH_TOKEN   # ordinary quoting rules, too
+(sekrt) ~/code/my-saas ❯ exit
 ~/code/my-saas ❯
 ```
 
 `sekrt shell` takes the same options as `run`, so `sekrt shell -e MY_TOKEN` and
 `sekrt shell -n` do what you would expect.
 
-### The badge in the prompt
+### The tag in the prompt
 
 A shell holding secrets shouldn't look like an ordinary one, so `sekrt shell`
-prefixes your prompt with 🔓 and leaves everything else — theme, aliases,
-functions, history — exactly as it was.
+prefixes your prompt with `(sekrt)` and leaves everything else — theme, aliases,
+functions, history — exactly as it was. Plain ASCII, in the shape `(venv)` and
+`(nix-shell)` already taught everyone to read: an emoji here would be two display
+cells the shell counts as one character, which is how a prompt ends up misplacing
+the cursor halfway through a long edited line.
 
 `PS1` handed over in the environment would not survive: the `.bashrc` or `.zshrc`
 that runs next sets its own. So the prompt is hooked through the shell's own
@@ -174,11 +186,11 @@ startup instead, and how depends on the shell:
 | bash | started against a generated rc that sources `~/.bashrc` first, then appends a `PROMPT_COMMAND` hook |
 | zsh | `ZDOTDIR` points at a generated pair that sources your real `.zshenv`/`.zshrc`, then adds a `precmd` hook |
 | fish | `--init-command` wraps `fish_prompt` after `config.fish` has run |
-| anything else | no badge — the banner and `$SEKRT_EXPOSED` still say what is going on |
+| anything else | no tag — the banner and `$SEKRT_EXPOSED` still say what is going on |
 
 A hook rather than a one-off assignment, because a themed prompt (starship,
 powerlevel10k, oh-my-*) rebuilds the prompt before every line and would drop a
-prefix set only once. The hook is idempotent, so the badge never stacks up.
+prefix set only once. The hook is idempotent, so the tag never stacks up.
 
 The two generated files hold prompt wiring and no secrets, and live in the same
 user-private directory as the session cache (`0600` inside `0700`) — an rc file
@@ -186,7 +198,7 @@ somebody else can write is code execution, so they may not live in `/tmp`
 proper. They carry a `Safe to delete.` header and are rewritten on each run.
 
 If your `~/.zshenv` sets `ZDOTDIR` itself, zsh reads your `.zshrc` instead of the
-generated one and the badge does not appear; nothing else changes.
+generated one and the tag does not appear; nothing else changes.
 
 Both commands also set `$SEKRT_EXPOSED` to the *names* of what they exposed (never
 the values), which is what to use for an indicator of your own — in an unsupported
@@ -194,24 +206,25 @@ shell, or somewhere other than the prompt:
 
 ```bash
 # e.g. in a tmux status line
-#{?$SEKRT_EXPOSED,🔓,}
+#{?$SEKRT_EXPOSED,🔓 ,}
 ```
 
 ## Command reference
 
 ```text
-sekrt run [OPTIONS] -- COMMAND [ARGS]...   run COMMAND with the secrets in its env
-sekrt run [OPTIONS] -c 'STRING'            run STRING through $SHELL
+sekrt run [OPTIONS] 'STRING'               run STRING through $SHELL, secrets in its env
+sekrt run [OPTIONS] -- COMMAND [ARGS]...   ...or an argv, run directly, with no shell
 sekrt shell [OPTIONS]                      open a subshell holding them
 
   -e, --var VAR[=ENTRY]   expose only VAR (optionally naming its entry); repeatable
   -n, --dry-run           list what would be exposed (names and sources) and stop
       --no-env-files      leave this repo's stored .env files out
       --repo SLUG         use another repo's stored env files
+  -c, --shell STRING      force the shell form for a string that doesn't look like one
 ```
 
 Aliases: `sekrt exec` for `run`, `sekrt sh` for `shell`. The exit status is the
-command's own, so `sekrt run -- pytest` fails a CI step exactly as `pytest` would.
+command's own, so `sekrt run pytest` fails a CI step exactly as `pytest` would.
 
 ## What it does and does not protect
 

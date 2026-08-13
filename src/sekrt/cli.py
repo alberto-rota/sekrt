@@ -944,21 +944,19 @@ def _warn_unresolved(unresolved: list[tuple[str, str]]) -> None:
 
 
 def _warn_swallowed(shell_command: str) -> None:
-    """A `-c` string with no `$` left in it: the calling shell probably ate the reference.
+    """A command string with a hole in it: the calling shell probably ate a reference.
 
-    `sekrt run -c "echo $MY_TOKEN"` — double quotes — is expanded by the shell
-    that runs sekrt, before sekrt exists, so what arrives is `echo ` and the
-    command prints nothing at all. Nothing in the string can prove that is what
-    happened, but a `-c` with no reference left in it had no reason to want a
-    shell, and a silently empty value is the worst way to find out.
+    `sekrt run "echo $MY_TOKEN"` — double quotes — is expanded by the shell that
+    runs sekrt, before sekrt exists, so what arrives is `echo ` and the command
+    prints nothing at all. `runtools.swallowed_text` knows the shapes that leaves.
     """
-    if "$" in shell_command:
+    if not runtools.swallowed_text(shell_command):
         return
     click.secho(
-        'note: that command refers to no variable — if you wrote "$VAR" in double '
+        'note: something is missing from that command — if you wrote "$VAR" in double '
         "quotes,\n"
         "      your own shell expanded it before sekrt ran. Single-quote it instead:\n"
-        "        sekrt run -c 'svc --token=\"$VAR\"'",
+        "        sekrt run 'svc --token=\"$VAR\"'",
         fg="yellow",
         err=True,
     )
@@ -984,7 +982,7 @@ def _warn_unexpanded(command: tuple[str, ...], exposures: list[runtools.Exposure
             f"note: ${hits[0]} reached the command as text — sekrt never writes a secret "
             f"into a command line (`ps` can read those).\n"
             f"      the program can read {hits[0]} from its environment, or let a shell "
-            f"expand it:  sekrt run -c '… ${hits[0]} …'",
+            f"expand it:  sekrt run '… ${hits[0]} …'",
             fg="yellow",
             err=True,
         )
@@ -998,7 +996,7 @@ def _warn_unexpanded(command: tuple[str, ...], exposures: list[runtools.Exposure
             "      away before sekrt ran — it expands what you type, and only sekrt's own "
             "child\n"
             "      knows the value. Single-quote it and let a shell do it:\n"
-            "        sekrt run -c 'svc --token=\"$VAR\"'\n"
+            "        sekrt run 'svc --token=\"$VAR\"'\n"
             "      or check what the command will see:  sekrt run -- printenv VAR",
             fg="yellow",
             err=True,
@@ -1008,7 +1006,7 @@ def _warn_unexpanded(command: tuple[str, ...], exposures: list[runtools.Exposure
 @main.command(context_settings={"ignore_unknown_options": True, "allow_interspersed_args": False})
 @click.argument("command", nargs=-1, type=click.UNPROCESSED)
 @click.option("--shell", "-c", "shell_command", default=None, metavar="STRING",
-              help="Run STRING through $SHELL, which expands $VAR references in it.")
+              help="Run STRING through $SHELL even if it looks like a bare program name.")
 @expose_options
 @friendly_errors
 def run(command, shell_command, requested, slug, no_env_files, dry_run) -> None:
@@ -1024,25 +1022,31 @@ def run(command, shell_command, requested, slug, no_env_files, dry_run) -> None:
     variables with -e to hand over those and nothing else.
 
     \b
-      sekrt run -- npm start                        # everything, like a loaded .env
-      sekrt run -n -- npm start                     # ...see exactly what that is
-      sekrt run -e MY_TOKEN -- service log          # only this one
-      sekrt run -e MY_TOKEN=work/api-token -- svc   # ...from a named entry
-      sekrt run -c 'service log --token="$MY_TOKEN"'   # a shell expands it
+      sekrt run 'npm start'                         # everything, like a loaded .env
+      sekrt run -n 'npm start'                      # ...see exactly what that is
+      sekrt run -e MY_TOKEN 'service log'           # only this one
+      sekrt run -e MY_TOKEN=work/api-token svc      # ...from a named entry
+      sekrt run 'service log --token="$MY_TOKEN"'   # a shell expands the reference
       sekrt run -- printenv MY_TOKEN                # what the command will see
     \b
-    Use -- before a command that has flags of its own. Note that YOUR shell
-    expands what you type before sekrt runs, so `-- echo $MY_TOKEN` prints
-    nothing: single-quote it into -c, or let the program read its environment.
-    For a whole session rather than one command, see `sekrt shell`.
+    A command quoted into one argument is handed to $SHELL, which is what expands
+    $VAR in it; several arguments (use -- first, so their flags are not read as
+    sekrt's) are run directly, with no shell involved. Note that YOUR shell
+    expands what you type before sekrt runs, so "echo $MY_TOKEN" in double quotes
+    prints nothing — single-quote it. For a whole session, see `sekrt shell`.
     """
     if bool(command) == bool(shell_command):
         raise click.ClickException(
             "give a command to run:\n"
-            "  sekrt run -- service log\n"
-            "  sekrt run -c 'service log --token=\"$MY_TOKEN\"'\n"
+            "  sekrt run 'service log'\n"
+            "  sekrt run 'service log --token=\"$MY_TOKEN\"'\n"
             "  sekrt shell                (a whole session instead of one command)"
         )
+    # One quoted string is a command written for a shell; an argv is not. Saying
+    # so with -c stays possible, for the string a shell is wanted for anyway.
+    if command and runtools.needs_shell(command):
+        command, shell_command = (), command[0]
+
     vault = get_vault()
     referenced = runtools.references(shell_command) if shell_command else []
     exposures, unresolved = _exposures(vault, requested, slug, no_env_files, referenced)
@@ -1086,7 +1090,7 @@ def shell(requested, slug, no_env_files, dry_run) -> None:
     count = len(exposures)
     click.secho(
         f"✔ {count} variable{'' if count == 1 else 's'} exposed in this subshell — "
-        f"{runtools.SHELL_BADGE} in the prompt until you `exit`",
+        f"the prompt says {runtools.SHELL_TAG} until you `exit`",
         fg="green",
         err=True,
     )
