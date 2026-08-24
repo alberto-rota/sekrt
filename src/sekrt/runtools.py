@@ -253,6 +253,7 @@ def resolve(
     *,
     requested: tuple[str, ...] | list[str] = (),
     referenced: tuple[str, ...] | list[str] = (),
+    bulk: bool | None = None,
 ) -> tuple[list[Exposure], list[tuple[str, str]]]:
     """What to expose, and what could not be found.
 
@@ -266,6 +267,11 @@ def resolve(
     files, then what was named outright — the more specific the claim on a
     variable, the later it lands.
 
+    *bulk* decides the first layer outright instead of inferring it from
+    *requested*: ``False`` keeps an unnamed call from taking the whole vault
+    (what `sekrt shell` does until asked with ``--all``), ``True`` takes it even
+    alongside ``-e``.
+
     *referenced* are the names a command mentions. One already in the environment
     is left alone — a command asking for ``$HOME`` is not asking the vault for
     anything — and one that resolves nowhere is reported rather than fatal, since
@@ -274,7 +280,8 @@ def resolve(
     Returns ``(exposures, unresolved)``, where *unresolved* pairs each name with
     why it could not be answered.
     """
-    chosen: dict[str, Exposure] = {} if requested else dict(resolver.bulk)
+    take_all = (not requested) if bulk is None else bulk
+    chosen: dict[str, Exposure] = dict(resolver.bulk) if take_all else {}
     chosen.update(resolver.stored)
     for item in requested:
         var, sep, entry_name = item.partition("=")
