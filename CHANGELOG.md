@@ -28,9 +28,16 @@ project adheres to [Semantic Versioning](https://semver.org/).
   arrives with the hole an expanded-away reference leaves behind (a leftover
   `--token=`, a trailing space, an empty argument) — signatures of a reference
   eaten by the shell that typed it, before sekrt existed.
-  `sekrt shell` opens a subshell holding the same variables, where `exit` revokes
-  them, and tags its prompt `(sekrt)` so a shell holding secrets never looks like
-  an ordinary one — through the shell's own startup files (a generated rc for
+  `sekrt shell` opens a subshell holding those variables, where `exit` revokes
+  them. It asks you to be specific where `run` does not: a subshell lasts as long
+  as you leave it open and hands what it holds to everything started from it, so
+  `-e` names what goes in, no flags at all means this repository's stored `.env`
+  files and nothing more, and the whole vault takes `--all`, which lists what
+  that covers and waits for a `y` (`--yes` answers in advance; with no terminal
+  to ask on it refuses rather than assuming). With nothing named and nothing
+  stored, nothing is decrypted and no shell opens.
+  A `sekrt shell` tags its prompt `(sekrt)` so a shell holding secrets never
+  looks like an ordinary one — through the shell's own startup files (a generated rc for
   bash, `ZDOTDIR` for zsh, `--init-command` for fish), which sources your real
   config first and hooks the prompt after it, so a theme that rebuilds the prompt
   every line keeps the tag, and aliases, functions and history are untouched.

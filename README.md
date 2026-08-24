@@ -14,7 +14,10 @@ Like [`pass`](https://www.passwordstore.org/), but with a modern
 **SSH keypair** and **`.env` file** support, and painless sync through any
 private git remote (GitHub, GitLab, self-hosted — anything).
 
-![sekrt TUI](docs/screenshot.svg)
+![sekrt — the CLI and the TUI in 20 seconds](docs/hero.gif)
+
+*Store a generated API key, hand it to a command, then browse the same vault
+in the TUI — one session, start to finish.*
 
 - 🔑 **Passwords & API keys** — organised in folders, generated, copied with auto-clearing clipboard
 - 📄 **`.env` files** — encrypt the `.env` of any repo into your vault, restore it in any fresh clone with one command
@@ -171,7 +174,7 @@ runs:
 sekrt run 'npm start'                             # everything, like a loaded .env
 sekrt run -e UV_PUBLISH_TOKEN 'uv publish'        # or just the one
 sekrt run 'service log --token="$MY_TOKEN"'       # a shell expands the reference
-sekrt shell                                       # a subshell; `exit` revokes
+sekrt shell -e UV_PUBLISH_TOKEN                   # a subshell; `exit` revokes
 ```
 
 `sekrt shell` tags its prompt — `(sekrt) ~/code/my-saas ❯` — so a shell holding
@@ -187,6 +190,12 @@ this repo stored with `sekrt env push`. Notes, SSH keys and stored files stay ou
 sources only. Never written to disk, never left in your shell, never put in a
 command line (`ps` can read those), and `$SEKRT_PASSPHRASE` is stripped from the
 child.
+
+`sekrt shell` asks you to be specific, because a subshell lasts as long as you
+leave it open and hands its variables to everything you start from it: name them
+with `-e`, or type no flags at all and get this repo's stored `.env` files and
+nothing else. The whole vault takes `sekrt shell --all`, which spells out what
+that means and asks before opening anything (`--yes` to skip the question).
 
 > [!IMPORTANT]
 > **Your shell expands what you type, before sekrt runs.** Only sekrt's *child*
@@ -367,7 +376,9 @@ sekrt run 'CMD'                run CMD with your secrets in its env (alias: exec
 sekrt run -e VAR 'CMD'         ...narrowed to VAR   (-n: show, don't run)
 sekrt run 'CMD $VAR'           quoted: a shell reads it, so it expands $VAR
 sekrt run -- CMD ARGS...       ...or hand over an argv, with no shell at all
-sekrt shell [-e VAR]           a subshell holding them; exit revokes (alias: sh)
+sekrt shell -e VAR             a subshell holding VAR; exit revokes (alias: sh)
+sekrt shell                    ...or this repo's stored .env files, and no more
+sekrt shell --all              ...or the whole vault, after confirming (-y: skip)
 sekrt ssh add|restore|ls|pub   SSH keypairs
 sekrt file add|get|ls          whole files, binary-safe
 sekrt remote URL               set the sync remote
@@ -485,6 +496,7 @@ from the tapes in `docs/vhs/`. Run them from the repo root with `sekrt` on
 `$PATH` (`brew install vhs`, then `uv tool install --editable .`):
 
 ```bash
+vhs docs/vhs/hero.tape         # -> docs/hero.gif  (the one at the top)
 vhs docs/vhs/quickstart.tape   # -> docs/quickstart.gif
 vhs docs/vhs/tui.tape          # -> docs/tui.gif (run quickstart.tape first to seed the demo vault)
 vhs docs/vhs/env.tape          # -> docs/env.gif
@@ -494,16 +506,17 @@ vhs docs/vhs/run.tape          # -> docs/run.gif
 vhs docs/vhs/forms.tape        # -> docs/forms.gif
 ```
 
-The `env`, `run` and `forms` tapes are self-contained: each rebuilds its fixture
-— real git repos with remotes, a fresh clone, a scratch vault — under
-`/tmp/sekrt-vhs-*` (`docs/vhs/setup-env-demo.sh`, `docs/vhs/setup-run-demo.sh`)
-and points `$HOME` at it, so your real vault and `~/.gitconfig` are never
-touched. Their fixtures *generate* secrets rather than piping them in: `sekrt add`
-reads through `getpass`, which reads `/dev/tty`, so a pipe is ignored and the
-recording would hang waiting for a keyboard.
+The `hero`, `env`, `run` and `forms` tapes are self-contained: each rebuilds
+its fixture — real git repos with remotes, a fresh clone, a scratch vault —
+under `/tmp/sekrt-vhs-*` (`setup-hero-demo.sh`, `setup-env-demo.sh`,
+`setup-run-demo.sh`) and points `$HOME` at it, so your real vault and
+`~/.gitconfig` are never touched. Their fixtures *generate* secrets rather
+than piping them in: `sekrt add` reads through `getpass`, which reads
+`/dev/tty`, so a pipe is ignored and the recording would hang waiting for a
+keyboard.
 
-`docs/screenshot.svg` (the image at the top of this file) is a Textual export
-rather than a recording, so it has its own generator:
+`docs/screenshot.svg` is a Textual export rather than a recording — a still of
+the TUI at full size — so it has its own generator:
 
 ```bash
 uv run python docs/vhs/make-screenshot.py   # -> docs/screenshot.svg

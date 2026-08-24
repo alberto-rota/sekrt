@@ -34,7 +34,8 @@ beginning and an end, and the end is the process exiting.
 
 ## What a command gets
 
-With nothing named, two sources, in this order:
+With nothing named, `sekrt run` takes two sources, in this order (`sekrt shell`
+is stricter — see [a whole session](#a-whole-session)):
 
 | Source | Exposed as |
 | --- | --- |
@@ -156,17 +157,55 @@ argument altogether, leaving nothing behind to notice.
 When one command isn't the shape of the work:
 
 ```console
-$ sekrt shell
-✔ 5 variables exposed in this subshell — the prompt says (sekrt) until you `exit`
-  AWS_ACCESS_KEY, DATABASE_URL, GITHUB_TOKEN, PORT, UV_PUBLISH_TOKEN
+$ sekrt shell -e UV_PUBLISH_TOKEN -e GITHUB_TOKEN
+✔ 4 variables exposed in this subshell — the prompt says (sekrt) until you `exit`
+  DATABASE_URL, GITHUB_TOKEN, PORT, UV_PUBLISH_TOKEN
 (sekrt) ~/code/my-saas ❯ uv publish            # ordinary shell, ordinary expansion
 (sekrt) ~/code/my-saas ❯ echo $UV_PUBLISH_TOKEN   # ordinary quoting rules, too
 (sekrt) ~/code/my-saas ❯ exit
 ~/code/my-saas ❯
 ```
 
-`sekrt shell` takes the same options as `run`, so `sekrt shell -e MY_TOKEN` and
-`sekrt shell -n` do what you would expect.
+`sekrt shell` takes the same options as `run` — `-e`, `-n`, `--no-env-files`,
+`--repo` all mean what they mean there — but not the same default. `run` bounds
+its exposure by the command: it ends when the command does, so handing an unnamed
+one everything is a small thing. A subshell ends when you remember to `exit`, and
+until then every variable is inherited by everything you start from it. So there
+is no unnamed whole vault:
+
+```console
+$ sekrt shell -e UV_PUBLISH_TOKEN       # this one (+ this repo's stored .env)
+$ sekrt shell                           # this repo's stored .env, and nothing else
+$ sekrt shell --all                     # the whole vault — asks first
+```
+
+With nothing to expose at all — no `-e`, no `--all`, no env file stored for this
+repo — nothing is decrypted and nothing opens:
+
+```console
+$ sekrt shell
+Error: nothing named — say what to expose:
+  sekrt shell -e MY_TOKEN
+  sekrt shell -e MY_TOKEN -e OTHER_TOKEN
+  sekrt shell --all          (every password and API key in the vault)
+  no env file is stored for 'github.com/you/my-saas' either — `sekrt env push` stores this repo's
+```
+
+`--all` is the `run` default, made deliberate. It names what it is about to hand
+over and waits for an answer, since "every secret I own, in a shell I may leave
+open all afternoon" is worth one keypress:
+
+```console
+$ sekrt shell --all
+⚠ this exposes all 5 secrets the vault can offer as variables to that
+  subshell and to everything you start from it:
+  AWS_ACCESS_KEY, DATABASE_URL, GITHUB_TOKEN, PORT, UV_PUBLISH_TOKEN
+Expose all 5? [y/N]:
+```
+
+`-y` / `--yes` answers it in advance. Without a terminal to ask on and without
+`-y`, `--all` refuses rather than assuming yes — a script that wanted the whole
+vault can say so.
 
 ### The tag in the prompt
 
@@ -221,6 +260,9 @@ sekrt shell [OPTIONS]                      open a subshell holding them
       --no-env-files      leave this repo's stored .env files out
       --repo SLUG         use another repo's stored env files
   -c, --shell STRING      force the shell form for a string that doesn't look like one
+                          (run only)
+  -a, --all               expose the whole vault, after confirming     (shell only)
+  -y, --yes               answer that confirmation in advance          (shell only)
 ```
 
 Aliases: `sekrt exec` for `run`, `sekrt sh` for `shell`. The exit status is the
