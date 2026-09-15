@@ -3,10 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/sekrt.svg)](https://pypi.org/project/sekrt/)
 [![CI](https://github.com/alberto-rota/sekrt/actions/workflows/ci.yml/badge.svg)](https://github.com/alberto-rota/sekrt/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/pypi/pyversions/sekrt.svg)](https://pypi.org/project/sekrt/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-
-> **sekrt** — *secret*, with the vowels taken out.
-> Everything else is AES-256, and only you can read it.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/alberto-rota/sekrt/blob/main/LICENSE)
 
 A fast TUI + CLI secret manager for developers and DevOps engineers.
 Like [`pass`](https://www.passwordstore.org/), but with a modern
@@ -14,7 +11,7 @@ Like [`pass`](https://www.passwordstore.org/), but with a modern
 **SSH keypair** and **`.env` file** support, and painless sync through any
 private git remote (GitHub, GitLab, self-hosted — anything).
 
-![sekrt — the CLI and the TUI in 20 seconds](docs/hero.gif)
+![sekrt — the CLI and the TUI in 20 seconds](https://raw.githubusercontent.com/alberto-rota/sekrt/main/docs/hero.gif)
 
 *Store a generated API key, hand it to a command, then browse the same vault
 in the TUI — one session, start to finish.*
@@ -151,7 +148,7 @@ git clone git@github.com:you/my-saas.git && cd my-saas
 sekrt env pull         # .env is back, byte for byte (0600 perms)
 ```
 
-![The .env round trip](docs/env.gif)
+![The .env round trip](https://raw.githubusercontent.com/alberto-rota/sekrt/main/docs/env.gif)
 
 The key is the repo's `origin` URL, not the path on disk — so a clone anywhere
 finds its own file, and HTTPS vs SSH remotes resolve to the same key. It
@@ -159,7 +156,7 @@ handles several env files per repo (`sekrt env push .env apps/*/.env.*`),
 reports what actually changed rather than rewriting blindly, and never
 overwrites a local file you've edited without `--force`.
 
-**📄 [Full guide: the `.env` workflow](docs/env.md)** — how repos are
+**📄 [Full guide: the `.env` workflow](https://github.com/alberto-rota/sekrt/blob/main/docs/env.md)** — how repos are
 identified, monorepos with one env file per service, the overwrite rules, using
 `--repo` for forks and renames, what the remote can see, and troubleshooting.
 
@@ -181,7 +178,7 @@ sekrt shell -e UV_PUBLISH_TOKEN                   # a subshell; `exit` revokes
 secrets never looks like an ordinary one, and leaves your theme, aliases and
 history exactly as they were (bash, zsh and fish).
 
-![sekrt run](docs/run.gif)
+![sekrt run](https://raw.githubusercontent.com/alberto-rota/sekrt/main/docs/run.gif)
 
 With nothing named, a command gets every `password` and `api_key` entry — under
 the variable its name reads as, so `api/my-token` is `$MY_TOKEN` — plus whatever
@@ -203,7 +200,7 @@ that means and asks before opening anything (`--yes` to skip the question).
 > empty line. Single-quote it — `sekrt run 'echo $MY_TOKEN'` — or check with
 > `sekrt run -- printenv MY_TOKEN`.
 
-**🏃 [Full guide: running commands with your secrets](docs/run.md)** — what is and
+**🏃 [Full guide: running commands with your secrets](https://github.com/alberto-rota/sekrt/blob/main/docs/run.md)** — what is and
 isn't exposed and why, narrowing it for code you don't control, the two forms,
 `$SEKRT_EXPOSED` in your prompt, and troubleshooting.
 
@@ -238,7 +235,7 @@ prints its size — use `file get` to get the bytes back out.
 tree of your vault, fuzzy filtering, a masked detail view, add/edit forms
 with a built-in password generator, and one-key sync.
 
-![sekrt TUI walkthrough](docs/tui.gif)
+![sekrt TUI walkthrough](https://raw.githubusercontent.com/alberto-rota/sekrt/main/docs/tui.gif)
 
 | Key | Action |
 | --- | --- |
@@ -289,7 +286,7 @@ terminal at all — a pipe, cron, CI — commands insist on an exact NAME instea
 them to store one password is worse than the thing it replaces. Leave the name
 out — or pass `-i` to start from what you already typed — and they ask instead:
 
-![The inline form](docs/forms.gif)
+![The inline form](https://raw.githubusercontent.com/alberto-rota/sekrt/main/docs/forms.gif)
 
 `tab` (or `↑`/`↓`) moves between fields, `←`/`→` picks on the rows that are a
 choice (password / api key / note, generate / import), `ctrl+g` fills the secret
@@ -397,7 +394,7 @@ list and examples. Where NAME is optional above, omitting it (or typing
 part of one) opens the [inline picker](#the-inline-picker) — or, for `add` and
 `ssh add`, an [inline form](#inline-forms).
 
-![sekrt CLI walkthrough](docs/quickstart.gif)
+![sekrt CLI walkthrough](https://raw.githubusercontent.com/alberto-rota/sekrt/main/docs/quickstart.gif)
 
 ## Security model
 
@@ -458,7 +455,7 @@ The vault is a plain git repository — inspect it any time with
 > **Upgrading from `tupacs`?** This project was published under that name
 > through 0.1.0. The `TUPACS_*` variables above still work as fallbacks, and
 > vaults written by 0.1.0 (`.tup` entry files) are read as-is. Only the vault
-> directory needs a hand — see [the migration note](CHANGELOG.md#020).
+> directory needs a hand — see [the migration note](https://github.com/alberto-rota/sekrt/blob/main/CHANGELOG.md#020).
 
 ## Why not just `pass`?
 
@@ -489,7 +486,7 @@ While `$SEKRT_VAULT` is set the unlock prompt names that vault
 (`🔐 passphrase sekrt-dev ❯`), so a scratch vault never gets mistaken for the
 real one.
 
-Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions welcome — see [CONTRIBUTING.md](https://github.com/alberto-rota/sekrt/blob/main/CONTRIBUTING.md).
 
 The `docs/*.gif` demos are recorded with [VHS](https://github.com/charmbracelet/vhs)
 from the tapes in `docs/vhs/`. Run them from the repo root with `sekrt` on
@@ -532,4 +529,4 @@ uv run python docs/vhs/make-screenshot.py   # -> docs/screenshot.svg
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/alberto-rota/sekrt/blob/main/LICENSE)
