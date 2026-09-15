@@ -148,19 +148,6 @@ def test_naming_a_variable_narrows_it_to_that_one(loaded):
     assert exposed == {"MY_TOKEN", "DATABASE_URL", "SHARED"}  # the repo's own still come
 
 
-def test_bulk_false_keeps_an_unnamed_call_out_of_the_vault(loaded):
-    """What `sekrt shell` does without --all: the repo's own files, and no more."""
-    _, _, resolver = loaded
-    exposures, _ = runtools.resolve(resolver, bulk=False)
-    assert {e.var for e in exposures} == {"DATABASE_URL", "SHARED"}  # env files only
-
-
-def test_bulk_true_takes_the_vault_alongside_what_was_named(loaded):
-    _, _, resolver = loaded
-    exposures, _ = runtools.resolve(resolver, requested=["MY_TOKEN"], bulk=True)
-    assert {e.var for e in exposures} == {"MY_TOKEN", "GITHUB", "DATABASE_URL", "SHARED"}
-
-
 def test_bulk_leaves_out_what_a_variable_cannot_carry(vault):
     v, key = vault
     v.write(key, "notes/wifi", new_entry("note", {"notes": "WPA2 phrase"}))

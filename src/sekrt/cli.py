@@ -886,26 +886,17 @@ def _exposures(
     slug: str | None,
     no_env_files: bool,
     referenced: list[str] | None = None,
-    bulk: bool | None = None,
 ) -> tuple[list[runtools.Exposure], list[tuple[str, str]]]:
     """Decrypt what the command asked for, and nothing else.
 
     Whether there is anything to expose at all is settled from entry *names*,
     which are plaintext — so a command that was never going to get a variable
     says so instead of asking for the passphrase first.
-
-    *bulk* is passed through to :func:`runtools.resolve`: `sekrt run` lets an
-    unnamed command have the whole vault, `sekrt shell` only when asked.
     """
     referenced = referenced or []
     slug = slug or envtools.current_context()[1]
     stored = [] if no_env_files else envtools.stored_files(vault, slug)
-    if (
-        not requested
-        and not referenced
-        and not stored
-        and not (bulk is not False and runtools.might_expose(vault))
-    ):
+    if not requested and not referenced and not stored and not runtools.might_expose(vault):
         raise click.ClickException(
             "nothing to expose — the vault holds no password or API key entries"
             + (f", and no env files are stored for {slug!r}" if not no_env_files else "")
@@ -916,7 +907,7 @@ def _exposures(
     key = obtain_key(vault)
     resolver = runtools.Resolver(vault, key, slug=slug, env_files=not no_env_files)
     exposures, unresolved = runtools.resolve(
-        resolver, requested=requested, referenced=referenced, bulk=bulk
+        resolver, requested=requested, referenced=referenced
     )
     if not exposures:
         raise click.ClickException(
@@ -1072,91 +1063,28 @@ def run(command, shell_command, requested, slug, no_env_files, dry_run) -> None:
     raise SystemExit(runtools.launch(argv, runtools.child_env(exposures)))
 
 
-def _nothing_named(vault: Vault, slug: str | None, no_env_files: bool) -> None:
-    """`sekrt shell` with nothing selected: say how to select, expose nothing.
-
-    A subshell outlives the command that opened it, so the whole vault is not
-    what an unnamed `sekrt shell` means — unlike `sekrt run`, where the exposure
-    ends with the command. Entry names are plaintext, so this refuses before
-    asking for the passphrase.
-    """
-    slug = slug or envtools.current_context()[1]
-    stored = [] if no_env_files else envtools.stored_files(vault, slug)
-    if stored:
-        return
-    lines = [
-        "nothing named — say what to expose:",
-        "  sekrt shell -e MY_TOKEN",
-        "  sekrt shell -e MY_TOKEN -e OTHER_TOKEN",
-        "  sekrt shell --all          (every password and API key in the vault)",
-    ]
-    if not no_env_files:
-        lines.append(
-            f"  no env file is stored for {slug!r} either — `sekrt env push` stores "
-            "this repo's"
-        )
-    raise click.ClickException("\n".join(lines))
-
-
-def _acknowledge_all(exposures: list[runtools.Exposure], yes: bool) -> None:
-    """`--all` is a loaded gun: name what it hands over, and have it confirmed.
-
-    Everything in the vault, for as long as the shell lives and to everything
-    started from it — including whatever that shell runs next. Worth one keypress.
-    """
-    count = len(exposures)
-    click.secho(
-        f"⚠ this exposes all {count} secret{'' if count == 1 else 's'} the vault can "
-        "offer as variables to that\n"
-        "  subshell and to everything you start from it:",
-        fg="yellow",
-        err=True,
-    )
-    click.secho("  " + ", ".join(exposure.var for exposure in exposures), dim=True, err=True)
-    if yes:
-        return
-    if not click.get_text_stream("stdin").isatty():
-        raise click.ClickException(
-            "refusing to expose the whole vault without confirmation — "
-            "pass --yes if you meant it"
-        )
-    if not click.confirm(f"Expose all {count}?", default=False, err=True):
-        raise click.Abort()
-
-
 @main.command()
-@click.option("--all", "-a", "expose_all", is_flag=True,
-              help="Expose every password and API key in the vault (asks first).")
-@click.option("--yes", "-y", is_flag=True, help="Skip the confirmation asked for --all.")
 @expose_options
 @friendly_errors
-def shell(expose_all, yes, requested, slug, no_env_files, dry_run) -> None:
-    """Open a subshell holding chosen vault secrets; gone when you `exit`.
+def shell(requested, slug, no_env_files, dry_run) -> None:
+    """Open a subshell holding vault secrets; they are gone when you `exit`.
 
-    "Expose these tokens for a bit", bounded: the variables live in that shell
-    and whatever you start from it, and nothing outside it. Say which with -e;
-    with nothing named you get this repo's stored env files and no more. The
-    whole vault takes --all, which asks first — unlike `sekrt run`, a subshell
-    keeps the secrets for as long as you leave it open.
+    "Expose my tokens for a bit", bounded: the variables live in that shell and
+    whatever you start from it, and nothing outside it. Chosen exactly as for
+    `sekrt run` — everything the vault can offer, narrowed by -e.
 
     \b
+      sekrt shell                        # every password and API key, + this repo's
       sekrt shell -e MY_TOKEN            # only this one
-      sekrt shell -e A_TOKEN -e B_TOKEN  # ...or a few
-      sekrt shell                        # this repo's stored .env, nothing else
-      sekrt shell --all                  # every password and API key, after y/N
-      sekrt shell -n -e MY_TOKEN         # what would be exposed, without opening it
+      sekrt shell -n                     # what would be exposed, without opening it
       exit                               # ...and they are gone
     """
     vault = get_vault()
-    if not expose_all and not requested:
-        _nothing_named(vault, slug, no_env_files)
-    exposures, _ = _exposures(vault, requested, slug, no_env_files, bulk=expose_all)
+    exposures, _ = _exposures(vault, requested, slug, no_env_files)
 
     if dry_run:
         _echo_plan(exposures, [runtools.default_shell()])
         return
-    if expose_all:
-        _acknowledge_all(exposures, yes)
     # Count and consequence on the first line, names on the second: a vault with
     # twenty tokens should wrap the list, not the sentence explaining it.
     count = len(exposures)
@@ -1167,13 +1095,6 @@ def shell(expose_all, yes, requested, slug, no_env_files, dry_run) -> None:
         err=True,
     )
     click.secho("  " + ", ".join(exposure.var for exposure in exposures), dim=True, err=True)
-    if not expose_all and not requested:
-        click.secho(
-            "  this repo's stored env files only — name others with -e, "
-            "or take the vault with --all",
-            dim=True,
-            err=True,
-        )
     argv, wiring = runtools.shell_launch()
     raise SystemExit(runtools.launch(argv, runtools.child_env(exposures) | wiring))
 
