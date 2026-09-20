@@ -1,32 +1,68 @@
 # 🔐 sekrt
 
+
+
 [![PyPI](https://img.shields.io/pypi/v/sekrt.svg)](https://pypi.org/project/sekrt/)
-[![CI](https://github.com/alberto-rota/sekrt/actions/workflows/ci.yml/badge.svg)](https://github.com/alberto-rota/sekrt/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/pypi/pyversions/sekrt.svg)](https://pypi.org/project/sekrt/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/alberto-rota/sekrt/blob/main/LICENSE)
 
-A fast TUI + CLI secret manager for developers and DevOps engineers.
-Like [`pass`](https://www.passwordstore.org/), but with a modern
-[Textual](https://textual.textualize.io/) interface, first-class **API key**,
-**SSH keypair** and **`.env` file** support, and painless sync through any
-private git remote (GitHub, GitLab, self-hosted — anything).
+A moden secret manager for ALL your secrets. With `sekrt` you store and retrieve your **passwords**, **API keys** and **.env** files from all your machines, seamlessly.
+`sekrt` working principle is inspired by [`pass`](https://www.passwordstore.org/): all your secrets are stored encrypted in a github repo, we simplified everything else about it. 
 
 ![sekrt — the CLI and the TUI in 20 seconds](https://raw.githubusercontent.com/alberto-rota/sekrt/main/docs/hero.gif)
 
-*Store a generated API key, hand it to a command, then browse the same vault
-in the TUI — one session, start to finish.*
+## `sekrt` features
+### Password Management
+`sektr` can be a simple password manager. You easily store a password, then `sekrt` encrypts it and stores it into a private repo. You`ll retrieve it with your main passphrase whenever you want.
 
-- 🔑 **Passwords & API keys** — organised in folders, generated, copied with auto-clearing clipboard
-- 📄 **`.env` files** — encrypt the `.env` of any repo into your vault, restore it in any fresh clone with one command
-- 🏃 **`sekrt run`** — hand a command your secrets in its environment only, for exactly as long as it runs
-- 🗝️ **SSH keypairs** — import, generate (ed25519), and restore with correct permissions
-- ☁️ **Git sync** — every change is a commit; `sekrt sync` pushes/pulls a private repo
-- 🖥️ **TUI + CLI** — a full keyboard-driven interface, script-friendly commands, and a few lines of inline picker or form when you leave a name out
-- 🪶 **Lightweight** — three dependencies (`textual`, `click`, `cryptography`), no daemon, no sudo, no gpg setup
+### We push your `.env` 
+They told you not to push your `.env` files. We agree, but you can still push it to your safe encrypted vault! `sekrt env push` will register your `.env` file with the current repo. From any other machine you will then `sekrt env pull`: your precious environment variables will be automatically encrypted and stored, and then safely pulled into your new directory.
+
+### Run commands that need secrets securely
+`sekrt run` unlocks the vault and gives **one process** decrypted secrets as environment variables; when your process ends, they are gone. Vault `password` and `api_key` entries work on their own (the last path segment becomes the variable: `tokens/uv-publish-token` is `$UV_PUBLISH_TOKEN`); stored `.env` files from `sekrt env push` are an extra source. With nothing named, that command gets every such vault entry plus this repo's `.env`; `-e UV_PUBLISH_TOKEN` is just that one (`--no-env-files` if you don't want the `.env` too). `sekrt shell` opens a subshell until you `exit`, but it is stricter: no flags means this repo's `.env` only, `-e` names what you want, `--all` is the whole vault.
+
+## Installation
+`sekrt` ships as a Python package. The suggested route in as a [uv](https://docs.astral.sh/uv/) tool
+```bash
+uv tool install sekrt   
+# or: pip install --user sekrt
+```
+
+## Setting up
+`sekrt` stores everything in a local vault at `$HOME/.local/share/sekrt`, which gets git-synced to a remote repo if you want all your secrets on all your machine. 
+
+To set everything up:
+```
+sekrt init
+```
+will create the vault for your and will allow you to paste the URL of a remote repo that you wanna use to sync your secrets across machines. 
+
+The vault is a plain git repositor: you need an empty **private** repo to
+point it at (GitHub, GitLab, Gitea, a bare repo over SSH,  anything git can push to). 
+`sekrt init` will ask you for the URL of your remote, but you can override it anytime with 
+```bash
+sekrt remote git@github.com:you/secrets.git   # or: sekrt init --remote <url> on a fresh vault
+```
+Every addition, modification or deletion of your secrets auto-commits locally; `sekrt sync` is what actually talks to the remote. Want every change pushed immediately instead?
+
+```bash
+sekrt autosync on
+```
+This behavior is disabled by default.
+
+> [!IMPORTANT]
+> **Each vault gets initialize with its unique encryption salt. If your secrets need to be synced, you need to inherit the salt**
+> 
+> Running `sekrt init` will always prompt you
+>
+>```bash
+>$ sekrt init
+>Do you already have a sekrt vault pushed to a git repo? [y/N]:
+>```
+> If it is your first time setting up a sekrt vault on any machine, 
 
 ## Contents
 
-- [Install](#install)
 - [Quickstart](#quickstart)
 - [Syncing with a git remote](#syncing-with-a-git-remote)
 - [The `.env` workflow](#the-env-workflow)
@@ -47,11 +83,6 @@ in the TUI — one session, start to finish.*
 
 ## Install
 
-```bash
-uv tool install sekrt      # recommended
-# or: pipx install sekrt
-# or: pip install --user sekrt
-```
 
 Requires Python 3.11+. Nothing else to set up — no daemon, no GPG keyring,
 no sudo.
@@ -91,11 +122,7 @@ then `git push` against `origin` — so you need an empty **private** repo to
 point it at (GitHub, GitLab, Gitea, a bare repo over SSH — anything git can
 push to).
 
-```bash
-# 1. create an empty private repo, e.g. `gh repo create secrets --private --clone=false`
-sekrt remote git@github.com:you/secrets.git   # or: sekrt init --remote <url> on a fresh vault
-sekrt sync                                    # first push
-```
+
 
 On every **other** machine, `sekrt init` asks the one question that matters and
 does the right thing with the answer:
@@ -111,21 +138,9 @@ Vault repo URL: git@github.com:you/secrets.git
 
 `sekrt clone <url>` does the same thing in one shot if you'd rather not be asked.
 
-> [!IMPORTANT]
-> A second machine must *clone* the vault, not create one. `init` generates a
-> new encryption salt and a new git root, so two independently-created vaults
-> share no history and cannot decrypt each other's entries. Cloning reuses the
-> existing salt, which is why your original passphrase keeps working. You don't
-> have to remember this: the prompt above steers you, `init --remote <url>` and
-> `remote <url>` refuse when the remote already holds a vault, and `sync`
-> refuses the impossible merge instead of corrupting anything.
 
-Every `add`/`edit`/`mv`/`rm` auto-commits locally; `sekrt sync` is what
-actually talks to the remote. Want every change pushed immediately instead?
 
-```bash
-sekrt autosync on
-```
+
 
 Remember: the remote only ever sees ciphertext and entry *names* — see
 [what the remote sees](#security-model) below.
@@ -379,6 +394,7 @@ sekrt shell --all              ...or the whole vault, after confirming (-y: skip
 sekrt ssh add|restore|ls|pub   SSH keypairs
 sekrt file add|get|ls          whole files, binary-safe
 sekrt remote URL               set the sync remote
+sekrt remote -v                print the sync remote URL
 sekrt sync                     pull --rebase + push
 sekrt autosync on|off          push automatically on every change
 sekrt git <args...>            raw git inside the vault

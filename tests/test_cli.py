@@ -403,6 +403,28 @@ def test_sync_workflow(runner, vault_dir, tmp_path):
     assert "synced" in result.output
 
 
+@requires_git
+def test_remote_verbose_prints_url(runner, vault_dir, tmp_path):
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    invoke(runner, "init", "--remote", str(bare))
+
+    shown = invoke(runner, "remote", "-v")
+    assert shown.exit_code == 0
+    assert shown.output.strip() == str(bare)
+
+    shown = invoke(runner, "remote")
+    assert shown.exit_code == 0
+    assert shown.output.strip() == str(bare)
+
+
+def test_remote_verbose_without_remote(runner, vault_dir):
+    invoke(runner, "init")
+    result = runner.invoke(main, ["remote", "-v"])
+    assert result.exit_code != 0
+    assert "no remote configured" in result.output
+
+
 def test_ssh_workflow(runner, vault_dir, tmp_path):
     invoke(runner, "init")
     result = invoke(runner, "ssh", "add", "deploy", "--generate")

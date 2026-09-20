@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `sekrt remote -v` prints the vault's sync remote URL (`sekrt remote` with no
+  argument does the same).
 - `sekrt run` and `sekrt shell`: hand a command your secrets in its environment
   only, for exactly as long as it runs. `sekrt run 'npm start'` exposes every
   password and API key in the vault, each under the variable its name reads as
