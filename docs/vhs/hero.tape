@@ -67,7 +67,7 @@ Sleep 1s
 Show
 
 # --- the CLI: store a secret, then hand it to a command -------------------
-Type "sekrt add api/openai-api-key -t api_key -g"
+Type "sekrt add api/openai-api-key -t api_key YOUR_KEY"
 Enter
 Sleep 1700ms
 

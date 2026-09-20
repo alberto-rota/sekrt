@@ -723,11 +723,20 @@ def generate(length: int, no_symbols: bool, token: bool, copy_: bool) -> None:
 
 
 @main.command()
-@click.argument("url")
+@click.argument("url", required=False)
+@click.option("-v", "--verbose", is_flag=True, help="Print the current remote URL.")
 @friendly_errors
-def remote(url: str) -> None:
-    """Set the git remote used for sync (e.g. a private GitHub repo)."""
+def remote(url: str | None, verbose: bool) -> None:
+    """Set or print the git remote used for sync (e.g. a private GitHub repo)."""
     vault = get_vault()
+    if verbose and url is not None:
+        raise click.UsageError("pass a URL to set the remote, or -v to print it, not both")
+    if url is None:
+        current = gitsync.get_remote(vault.path)
+        if current is None:
+            raise click.ClickException("no remote configured — run `sekrt remote <url>` first")
+        click.echo(current)
+        return
     if gitsync.remote_has_commits(url) and not vault.list_entries():
         # Empty local vault + populated remote: almost certainly a second machine
         # that ran `init` by mistake. Pointing it at the remote guarantees an

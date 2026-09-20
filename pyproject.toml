@@ -1,7 +1,7 @@
 [project]
 name = "sekrt"
-version = "0.3.4"
-description = "A secret manager for developers: passwords, API keys, SSH keys and .env files  encrypted locally, synced with git."
+version = "0.3.3"
+description = "A secret manager for developers: passwords, API keys, SSH keys and .env files encrypted locally, synced with git."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
