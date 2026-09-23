@@ -23,7 +23,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import Input, Label, Static
 
-from sekrt.prefs import Palette, load_palette
+from sekrt.prefs import Palette, load_palette, load_settings
 from sekrt.tui.theme import apply_palette
 
 MARKER = "❯"  # the same cursor the picker uses, on the chosen option
@@ -198,7 +198,7 @@ class FormApp(App[dict]):
         from sekrt.generate import generate_password
 
         widget = self._widget(spec.key)
-        widget.value = generate_password()
+        widget.value = generate_password(load_settings().password_length)
         widget.focus()
 
     def action_move(self, delta: int) -> None:

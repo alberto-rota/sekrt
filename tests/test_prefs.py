@@ -61,6 +61,52 @@ def test_reset_goes_back_to_the_stock_colors():
     prefs.reset_palette()  # already gone — still fine
 
 
+def test_saving_a_color_keeps_the_other_settings():
+    prefs.save_settings(unlock_minutes=90, clipboard_seconds=15, password_length=32)
+    prefs.save_palette(Palette(accent="#00d7af"))
+    assert prefs.load_palette().accent == "#00d7af"
+    assert prefs.load_settings() == prefs.Settings(
+        unlock_minutes=90, clipboard_seconds=15, password_length=32
+    )
+
+
+def test_resetting_colors_keeps_the_other_settings():
+    prefs.save_settings(unlock_minutes=90)
+    prefs.save_palette(Palette(accent="#00d7af"))
+    prefs.reset_palette()
+    assert prefs.load_palette() == DEFAULT_PALETTE
+    assert prefs.load_settings().unlock_minutes == 90
+    assert prefs.prefs_path().is_file()
+
+
+def test_a_stock_setting_is_forgotten_rather_than_stored():
+    prefs.save_settings(unlock_minutes=90)
+    prefs.save_settings(unlock_minutes=prefs.DEFAULT_UNLOCK_MINUTES)
+    assert not prefs.prefs_path().exists()
+    assert prefs.load_settings() == prefs.DEFAULT_SETTINGS
+
+
+def test_a_hand_edited_setting_falls_back_on_its_own():
+    path = prefs.prefs_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "unlock_minutes": "soon",
+        "clipboard_seconds": 15,
+        "password_length": 0,
+    }))
+    settings = prefs.load_settings()
+    assert settings.unlock_minutes == prefs.DEFAULT_UNLOCK_MINUTES
+    assert settings.clipboard_seconds == 15
+    assert settings.password_length == prefs.DEFAULT_PASSWORD_LENGTH
+
+
+def test_settings_outside_their_range_are_refused():
+    with pytest.raises(prefs.PrefsError):
+        prefs.save_settings(clipboard_seconds=0)
+    with pytest.raises(prefs.PrefsError):
+        prefs.save_settings(password_length=3)
+
+
 def test_a_hand_edited_file_costs_at_most_one_color():
     """A broken config must never be the reason you can't open your vault."""
     path = prefs.prefs_path()

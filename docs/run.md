@@ -166,6 +166,8 @@ $ sekrt shell -e UV_PUBLISH_TOKEN -e GITHUB_TOKEN
 ~/code/my-saas ❯
 ```
 
+![sekrt shell](shell.gif)
+
 `sekrt shell` takes the same options as `run` — `-e`, `-n`, `--no-env-files`,
 `--repo` all mean what they mean there — but not the same default. `run` bounds
 its exposure by the command: it ends when the command does, so handing an unnamed
@@ -309,12 +311,13 @@ not inherited. Run `sekrt unlock` first; the session cache is shared.
 
 ## Regenerating the GIF on this page
 
-The recording is a [VHS](https://github.com/charmbracelet/vhs) tape, and rebuilds
-its own fixture — a throwaway vault and a repo with a stored `.env` under
-`/tmp/sekrt-vhs-run`, with `$HOME` pointed at it, so your real vault is never in
-reach:
+The recordings are [VHS](https://github.com/charmbracelet/vhs) tapes, and each
+rebuilds its own fixture — a throwaway vault and a repo with a stored `.env`
+under `/tmp/sekrt-vhs-run` (or `/tmp/sekrt-vhs-shell`), with `$HOME` pointed at
+it, so your real vault is never in reach:
 
 ```bash
 vhs docs/vhs/run.tape       # -> docs/run.gif
+vhs docs/vhs/shell.tape     # -> docs/shell.gif
 vhs docs/vhs/forms.tape     # -> docs/forms.gif (the inline form)
 ```

@@ -24,6 +24,8 @@ mkdir -p "$DEMO_HOME/code" "$DEMO_HOME/clones"
 
 # Fake HOME: git needs an identity to commit, and sekrt's auto-commits would
 # fail without one. Also keeps the demo off the real ~/.gitconfig.
+# `insteadOf` is appended after the bare remote exists so tapes can type a
+# real-looking `git clone git@github.com:you/my-saas.git` with no network.
 cat > "$DEMO_HOME/.gitconfig" <<'EOF'
 [user]
 	name = Demo
@@ -72,6 +74,11 @@ EOF
 
 git -C "$saas" add -A
 git -C "$saas" -c commit.gpgsign=false commit -qm "Initial commit"
+
+# Bare copy of origin, so a typed GitHub URL clones locally (see insteadOf).
+mkdir -p "$DEMO_HOME/remotes/you"
+git clone --bare -q "$saas" "$DEMO_HOME/remotes/you/my-saas.git"
+git config --global url."$DEMO_HOME/remotes/you/my-saas.git".insteadOf "git@github.com:you/my-saas.git"
 
 # --- the monorepo: several env files, one per service ---------------------
 mono="$DEMO_HOME/code/acme-platform"

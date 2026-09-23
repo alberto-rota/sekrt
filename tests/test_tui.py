@@ -128,7 +128,7 @@ async def test_colors_modal_previews_live_saves_on_enter(populated_vault):
         await pilot.press("t")
         await pilot.pause()
         assert isinstance(app.screen, PaletteModal)
-        assert app.window_chrome == ("sekrt — colors", None)
+        assert app.window_chrome == ("sekrt — config", None)
 
         field = app.screen.query_one("#c-accent", Input)
         field.focus()
@@ -168,6 +168,82 @@ async def test_cancelling_the_colors_modal_restores_the_old_palette(populated_va
         assert app.palette == DEFAULT_PALETTE
         assert app.current_theme.accent == DEFAULT_PALETTE.accent
         assert not prefs_path().exists()
+
+
+async def test_the_config_modal_saves_unlock_clipboard_and_length(populated_vault):
+    """`t` edits the same three defaults as `sekrt config`, and escape keeps them."""
+    from sekrt.prefs import DEFAULT_SETTINGS, load_settings
+
+    v, key = populated_vault
+    app = SekrtApp(vault=v, key=key)
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.pause()
+        await pilot.press("t")
+        await pilot.pause()
+
+        length = app.screen.query_one("#s-password_length")
+        assert length.value == str(DEFAULT_SETTINGS.password_length)
+        length.focus()
+        await pilot.pause()
+        await pilot.press("right", "right")  # 20 → 22
+        await pilot.pause()
+        assert length.value == "22"
+
+        clipboard = app.screen.query_one("#s-clipboard_seconds")
+        clipboard.focus()
+        await pilot.pause()
+        clipboard.clear()
+        await pilot.press(*"15")
+        await pilot.pause()
+        assert not clipboard.has_class("-bad-color")
+
+        unlock = app.screen.query_one("#s-unlock_minutes")
+        unlock.focus()
+        await pilot.pause()
+        unlock.clear()
+        await pilot.press("0")  # below the range — the last good value stays
+        await pilot.pause()
+        assert unlock.has_class("-bad-color")
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+    saved = load_settings()
+    assert saved.password_length == 22
+    assert saved.clipboard_seconds == 15
+    assert saved.unlock_minutes == DEFAULT_SETTINGS.unlock_minutes
+
+    app = SekrtApp(vault=v, key=key)
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.pause()
+        await pilot.press("t")
+        await pilot.pause()
+        app.screen.query_one("#s-clipboard_seconds").focus()
+        await pilot.pause()
+        await pilot.press("right")
+        await pilot.press("escape")
+        await pilot.pause()
+    assert load_settings().clipboard_seconds == 15  # the escape left the saved 15
+
+
+async def test_ctrl_r_in_the_config_modal_restores_the_stock_defaults(populated_vault):
+    from sekrt.prefs import DEFAULT_PALETTE, DEFAULT_SETTINGS
+
+    v, key = populated_vault
+    app = SekrtApp(vault=v, key=key)
+    async with app.run_test(size=(100, 36)) as pilot:
+        await pilot.pause()
+        await pilot.press("t")
+        await pilot.pause()
+        length = app.screen.query_one("#s-password_length")
+        length.focus()
+        await pilot.pause()
+        await pilot.press("right")
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        editor = app.screen.query_one("#s-password_length")
+        assert editor.value == str(DEFAULT_SETTINGS.password_length)
+        assert app.screen.query_one("#c-accent").value == DEFAULT_PALETTE.accent
 
 
 async def test_the_tui_starts_in_the_saved_colors(vault):

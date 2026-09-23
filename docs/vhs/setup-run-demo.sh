@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Build the fixture the `run` and inline-form demo tapes record against.
+# Build the fixture the `run`, `shell`, and inline-form demo tapes record against.
 #
-# Both tapes need what a real working machine has: a repo whose `.env` is
+# These tapes need what a real working machine has: a repo whose `.env` is
 # already in the vault (that is half of what an unnamed `sekrt run` hands over)
 # and a few API keys (the other half). Everything lives under a single directory
 # used as a fake $HOME, so the recorded prompt reads `~/code/my-saas` instead of
@@ -34,7 +34,7 @@ EOF
 
 # The prompt for the recorded shell — and for the subshell `sekrt shell` opens,
 # which sources this file like any other bash session, so the two match and the
-# only difference on screen is the 🔓.
+# only difference on screen is the `(sekrt)` tag.
 cat > "$DEMO_HOME/.bashrc" <<'EOF'
 PS1="\[\e[38;2;170;170;170m\]\w \[\e[1;38;2;255;0;0m\]❯\[\e[0m\] "
 EOF

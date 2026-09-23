@@ -12,7 +12,7 @@ from sekrt.vault import (
     validate_name,
 )
 
-from .conftest import PASSPHRASE
+from .conftest import PASSPHRASE, requires_git
 
 
 def test_create_and_unlock(vault):
@@ -125,3 +125,34 @@ def test_entry_file_permissions(vault):
     v.write(key, "perm", new_entry("password", {"password": "x"}))
     mode = (v.path / "perm.skr").stat().st_mode & 0o777
     assert mode == 0o600
+
+
+def test_env_aliases_roundtrip(vault):
+    v, _ = vault
+    assert v.env_aliases == {}
+    v.set_env_aliases({"github.com/you/old": "github.com/you/new"})
+    assert v.env_aliases == {"github.com/you/old": "github.com/you/new"}
+    v.set_env_aliases({})
+    assert v.env_aliases == {}
+
+
+@requires_git
+def test_write_commit_false_batches(vault):
+    v, key = vault
+    import subprocess
+
+    before = subprocess.check_output(
+        ["git", "-C", str(v.path), "rev-list", "--count", "HEAD"], text=True
+    ).strip()
+    v.write(key, "a", new_entry("password", {"password": "1"}), commit=False)
+    v.write(key, "b", new_entry("password", {"password": "2"}), commit=False)
+    mid = subprocess.check_output(
+        ["git", "-C", str(v.path), "rev-list", "--count", "HEAD"], text=True
+    ).strip()
+    assert mid == before
+    v._commit("batch")
+    after = subprocess.check_output(
+        ["git", "-C", str(v.path), "rev-list", "--count", "HEAD"], text=True
+    ).strip()
+    assert int(after) == int(before) + 1
+    assert v.read(key, "a")["data"]["password"] == "1"

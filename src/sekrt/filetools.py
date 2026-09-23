@@ -17,6 +17,10 @@ from sekrt.vault import Vault, VaultError, new_entry
 
 FILE_PREFIX = "file"
 
+# GitHub and GitLab reject a single blob over 100 MiB. Encryption inflates the
+# payload (~4/3 via base64), so a source this large will not `sekrt sync`.
+WARN_FILE_BYTES = 100 * 1024 * 1024
+
 
 class FileToolError(VaultError):
     pass
