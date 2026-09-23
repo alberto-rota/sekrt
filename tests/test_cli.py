@@ -188,6 +188,22 @@ def test_get_without_a_name_picks_interactively(runner, vault_dir, fake_picker):
     assert result.output.strip() == invoke(runner, "get", "cloud/aws-key").output.strip()
 
 
+def test_get_offers_press_c_to_copy(runner, vault_dir, fake_clipboard, monkeypatch):
+    from sekrt import cli, clipboard
+
+    monkeypatch.setattr(cli, "_stdout_is_tty", lambda: True)
+    monkeypatch.setattr(clipboard, "read_key", lambda: "c")
+    invoke(runner, "init")
+    invoke(runner, "add", "work/github", input="s3cret!\ns3cret!\n")
+
+    result = invoke(runner, "get", "work/github")
+    assert result.exit_code == 0
+    assert "s3cret!" in result.output
+    assert "press c to copy" in result.output + result.stderr
+    assert "45s" not in result.output + result.stderr
+    assert fake_clipboard == ["s3cret!"]
+
+
 def test_passphrase_is_asked_before_the_picker_draws(runner, vault_dir, monkeypatch):
     """Unlock first: a list you can act on beats one that prompts after you choose."""
     from sekrt import cli
@@ -277,6 +293,15 @@ def test_ls_find_mv_rm(runner, vault_dir):
     assert invoke(runner, "ls").output.splitlines() == ["b/two"]
 
 
+def test_ls_asks_for_the_passphrase(runner, vault_dir, monkeypatch):
+    invoke(runner, "init")
+    invoke(runner, "add", "a/one", "-g")
+    monkeypatch.delenv("SEKRT_PASSPHRASE")
+    result = runner.invoke(main, ["ls"], input=f"{PASSPHRASE}\n")
+    assert result.exit_code == 0
+    assert "a/one" in result.output
+
+
 def test_aliases(runner, vault_dir):
     invoke(runner, "init")
     invoke(runner, "insert", "x", "-g")  # pass-style alias for add
@@ -296,6 +321,259 @@ def test_generate_password_properties():
         assert any(c.islower() for c in p)
         assert any(c.isupper() for c in p)
         assert any(c.isdigit() for c in p)
+
+
+def _completions(*args: str, incomplete: str = "") -> list[str]:
+    from click.shell_completion import ZshComplete
+
+    comp = ZshComplete(main, {}, "sekrt", "_SEKRT_COMPLETE")
+    return [item.value for item in comp.get_completions(list(args), incomplete)]
+
+
+def test_entry_names_complete_only_while_unlocked(runner, vault_dir, monkeypatch):
+    invoke(runner, "init")
+    invoke(runner, "add", "work/github", "-g")
+    invoke(runner, "add", "cloud/aws", "-g")
+    secret = invoke(runner, "get", "work/github").output.strip()
+
+    # A passphrase in the environment is how scripts unlock. Completion does
+    # not: names appear only after `sekrt unlock` wrote a session.
+    assert _completions("get") == []
+
+    invoke(runner, "unlock", "-t", "5")
+    monkeypatch.delenv("SEKRT_PASSPHRASE")
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("completion must not load the session key")
+
+    monkeypatch.setattr("sekrt.session.load_key", boom)
+    monkeypatch.setattr("sekrt.cli.obtain_key", boom)
+
+    assert _completions("get") == ["cloud/aws", "work/github"]
+    assert _completions("get", incomplete="work") == ["work/github"]
+    assert _completions("show", incomplete="cloud/") == ["cloud/aws"]
+    assert _completions("rm", incomplete="work/") == ["work/github"]
+    assert _completions("edit", incomplete="cl") == ["cloud/aws"]
+    assert _completions("add", incomplete="work") == ["work/github"]
+    assert _completions("ls", incomplete="cl") == ["cloud/aws"]
+    assert _completions("find", incomplete="work/g") == ["work/github"]
+    assert _completions("list", incomplete="cl") == ["cloud/aws"]  # alias of ls
+    assert _completions("mv", "work/github", incomplete="cl") == ["cloud/aws"]
+    assert secret not in " ".join(_completions("get"))
+    assert "get" in _completions()
+    assert "work/github" not in _completions()
+
+    invoke(runner, "lock")
+    assert _completions("get") == []
+
+
+def test_ssh_and_file_complete_the_name_they_take(runner, vault_dir, tmp_path, monkeypatch):
+    invoke(runner, "init")
+    invoke(runner, "ssh", "add", "deploy", "--generate")
+    src = tmp_path / "codes.txt"
+    src.write_text("x")
+    invoke(runner, "file", "add", "mfa/github", str(src))
+    invoke(runner, "unlock")
+    monkeypatch.delenv("SEKRT_PASSPHRASE")
+
+    assert _completions("ssh", "restore") == ["deploy"]
+    assert _completions("ssh", "authorize") == ["deploy"]
+    assert _completions("ssh", "pub", incomplete="de") == ["deploy"]
+    assert _completions("ssh", "add", incomplete="de") == ["deploy"]
+    assert _completions("file", "get") == ["mfa/github"]
+    assert _completions("file", "add", incomplete="mfa") == ["mfa/github"]
+    assert "ssh/deploy" in _completions("get")
+    assert "file/mfa/github" in _completions("show")
+
+
+def test_run_completes_the_entry_after_equals(runner, vault_dir, monkeypatch):
+    invoke(runner, "init")
+    invoke(runner, "add", "work/github", "-g")
+    invoke(runner, "unlock")
+    monkeypatch.delenv("SEKRT_PASSPHRASE")
+
+    assert _completions("run", "-e", incomplete="TOKEN=wo") == ["TOKEN=work/github"]
+    assert _completions("run", "-e", incomplete="TOKEN=") == ["TOKEN=work/github"]
+    assert _completions("run", "-e", incomplete="wo") == []
+    assert _completions("shell", "-e", incomplete="TOKEN=work/") == ["TOKEN=work/github"]
+    assert _completions("run", "-e", "TOKEN=work/github", "-e", incomplete="OTHER=wo") == [
+        "OTHER=work/github"
+    ]
+
+
+def test_completion_is_empty_without_a_vault(runner, tmp_path, monkeypatch):
+    monkeypatch.setenv("SEKRT_VAULT", str(tmp_path / "missing"))
+    assert _completions("get", incomplete="work") == []
+
+
+def test_completion_script_is_static(runner, vault_dir, monkeypatch):
+    invoke(runner, "init")
+    invoke(runner, "add", "work/github", "-g")
+    secret = invoke(runner, "get", "work/github").output.strip()
+    invoke(runner, "unlock")
+    monkeypatch.delenv("SEKRT_PASSPHRASE")
+
+    result = invoke(runner, "completion", "zsh")
+    assert result.exit_code == 0
+    assert "_SEKRT_COMPLETE=zsh_complete" in result.output
+    assert "compdef" in result.output
+    assert "work/github" not in result.output
+    assert secret not in result.output
+
+    fish = invoke(runner, "completion", "fish")
+    assert fish.exit_code == 0
+    assert "_SEKRT_COMPLETE=fish_complete" in fish.output
+    assert "work/github" not in fish.output
+
+
+def test_completion_protocol_prints_names_only(runner, vault_dir, monkeypatch):
+    invoke(runner, "init")
+    invoke(runner, "add", "work/github", "-g")
+    secret = invoke(runner, "get", "work/github").output.strip()
+    invoke(runner, "unlock")
+    monkeypatch.delenv("SEKRT_PASSPHRASE")
+
+    from sekrt import session
+
+    cached_key = session._session_file(vault_dir).read_text()
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("completion must not load the session key")
+
+    monkeypatch.setattr("sekrt.session.load_key", boom)
+
+    result = runner.invoke(
+        main,
+        [],
+        prog_name="sekrt",
+        env={
+            "_SEKRT_COMPLETE": "zsh_complete",
+            "COMP_WORDS": "sekrt get wo",
+            "COMP_CWORD": "2",
+        },
+    )
+    assert result.exit_code == 0
+    assert "work/github" in result.output
+    assert secret not in result.output
+    assert cached_key not in result.output
+
+
+def test_unlock_installs_zsh_completion_on_a_tty(runner, vault_dir, monkeypatch, tmp_path):
+    invoke(runner, "init")
+    invoke(runner, "add", "work/github", "-g")
+    secret = invoke(runner, "get", "work/github").output.strip()
+    dest_dir = tmp_path / "site-functions"
+    dest_dir.mkdir()
+    monkeypatch.setenv("FPATH", str(dest_dir))
+    monkeypatch.setattr("sekrt.cli._stdout_is_tty", lambda: True)
+    monkeypatch.setattr("sekrt.cli.invoking_shell", lambda: "zsh")
+
+    result = invoke(runner, "unlock")
+    assert result.exit_code == 0
+    script = (dest_dir / "_sekrt").read_text()
+    assert script.startswith("#compdef sekrt\n")
+    assert "_SEKRT_COMPLETE=zsh_complete" in script
+    assert "work/github" not in script
+    assert secret not in script
+    assert "new terminal" in result.output
+
+    mtime = (dest_dir / "_sekrt").stat().st_mtime_ns
+    again = invoke(runner, "unlock")
+    assert (dest_dir / "_sekrt").stat().st_mtime_ns == mtime
+    assert "new terminal" not in again.output
+
+
+def test_unlock_does_not_install_completion_when_not_a_tty(
+    runner, vault_dir, monkeypatch, tmp_path
+):
+    invoke(runner, "init")
+    dest_dir = tmp_path / "site-functions"
+    dest_dir.mkdir()
+    monkeypatch.setenv("FPATH", str(dest_dir))
+    monkeypatch.setattr("sekrt.cli.invoking_shell", lambda: "zsh")
+    invoke(runner, "unlock")
+    assert not (dest_dir / "_sekrt").exists()
+
+
+def test_zsh_completion_skips_a_world_writable_directory(tmp_path, monkeypatch):
+    from sekrt.cli import install_completion
+
+    world = tmp_path / "world"
+    owned = tmp_path / "owned"
+    world.mkdir()
+    owned.mkdir()
+    os.chmod(world, 0o777)
+    os.chmod(owned, 0o755)
+    monkeypatch.setenv("FPATH", f"{world}:{owned}")
+    path, changed = install_completion("zsh")
+    assert path == owned / "_sekrt"
+    assert changed
+    assert not (world / "_sekrt").exists()
+
+
+def test_zsh_completion_is_absent_without_a_safe_directory(tmp_path, monkeypatch):
+    from sekrt.cli import install_completion
+
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    os.chmod(locked, 0o555)
+    try:
+        monkeypatch.setenv("FPATH", str(locked))
+        assert install_completion("zsh") is None
+    finally:
+        os.chmod(locked, 0o755)
+
+
+def test_installing_bash_completion_stays_quiet(tmp_path, monkeypatch, capsys):
+    from sekrt.cli import install_completion
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
+    install_completion("bash")
+    assert "4.4" not in capsys.readouterr().err
+
+
+def test_fish_and_bash_completion_use_their_user_dirs(tmp_path, monkeypatch):
+    from sekrt.cli import install_completion
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "share"))
+    fish, _ = install_completion("fish")
+    bash, _ = install_completion("bash")
+    assert fish == tmp_path / "config" / "fish" / "completions" / "sekrt.fish"
+    assert "fish_complete" in fish.read_text()
+    assert bash == tmp_path / "share" / "bash-completion" / "completions" / "sekrt"
+    assert "_SEKRT_COMPLETE=bash_complete" in bash.read_text()
+
+
+def test_name_arguments_use_the_unlocked_completer():
+    from sekrt.cli import complete_entry, complete_named_entry
+
+    def completer(cmd, name):
+        return next(param for param in cmd.params if param.name == name)._custom_shell_complete
+
+    commands = main.commands
+    for command, argument in (
+        ("add", "name"),
+        ("get", "name"),
+        ("show", "name"),
+        ("ls", "prefix"),
+        ("find", "query"),
+        ("edit", "name"),
+        ("mv", "old"),
+        ("mv", "new"),
+        ("rm", "name"),
+    ):
+        assert completer(commands[command], argument) is complete_entry
+
+    ssh = commands["ssh"].commands
+    stored = commands["file"].commands
+    for command in ("add", "restore", "pub", "authorize"):
+        assert completer(ssh[command], "name") is complete_entry
+    for command in ("add", "get"):
+        assert completer(stored[command], "name") is complete_entry
+    assert completer(stored["add"], "path") is not complete_entry
+    assert completer(commands["run"], "requested") is complete_named_entry
+    assert completer(commands["shell"], "requested") is complete_named_entry
 
 
 def test_unlock_lock_cycle(runner, vault_dir, monkeypatch):
@@ -440,6 +718,50 @@ def test_ssh_workflow(runner, vault_dir, tmp_path):
     result = invoke(runner, "ssh", "restore", "deploy", "--dir", str(dest))
     assert result.exit_code == 0
     assert (dest / "deploy").stat().st_mode & 0o777 == 0o600
+    assert (dest / "deploy.pub").stat().st_mode & 0o777 == 0o644
+    assert (dest / "deploy.pub").read_text().startswith("ssh-ed25519 ")
+    assert not (dest / "authorized_keys").exists()
+
+    result = invoke(runner, "ssh", "restore", "deploy", "--dir", str(dest), "--authorize", "-f")
+    assert result.exit_code == 0
+    assert "authorized" in result.output
+    auth = dest / "authorized_keys"
+    assert auth.stat().st_mode & 0o777 == 0o600
+    assert auth.read_text().startswith("ssh-ed25519 ")
+
+    result = invoke(runner, "ssh", "authorize", "deploy", "--dir", str(dest))
+    assert result.exit_code == 0
+    assert "already in" in result.output
+    assert auth.read_text().count("ssh-ed25519 ") == 1
+
+
+def test_ssh_authorize_does_not_write_the_private_key(runner, vault_dir, tmp_path):
+    invoke(runner, "init")
+    invoke(runner, "ssh", "add", "laptop", "--generate")
+    dest = tmp_path / "sshdir"
+    result = invoke(runner, "ssh", "authorize", "laptop", "--dir", str(dest))
+    assert result.exit_code == 0
+    assert "authorized" in result.output
+    names = sorted(p.name for p in dest.iterdir())
+    assert names == ["authorized_keys"]
+    assert (dest / "authorized_keys").read_text().startswith("ssh-ed25519 ")
+
+
+def test_ssh_restore_writes_pub_for_a_private_only_import(runner, vault_dir, tmp_path):
+    invoke(runner, "init")
+    invoke(runner, "ssh", "add", "source", "--generate")
+    src = tmp_path / "src"
+    invoke(runner, "ssh", "restore", "source", "--dir", str(src))
+    (src / "source.pub").unlink()
+
+    result = invoke(runner, "ssh", "add", "imported", "--key", str(src / "source"))
+    assert result.exit_code == 0
+    dest = tmp_path / "dest"
+    result = invoke(runner, "ssh", "restore", "imported", "--dir", str(dest))
+    assert result.exit_code == 0
+    assert (dest / "source").is_file()
+    assert (dest / "source.pub").read_text().startswith("ssh-ed25519 ")
+    assert invoke(runner, "ssh", "pub", "imported").output.startswith("ssh-ed25519 ")
 
 
 def test_no_vault_errors_cleanly(runner, tmp_path, monkeypatch):
@@ -458,6 +780,7 @@ def test_file_workflow(runner, vault_dir, tmp_path, monkeypatch):
     result = invoke(runner, "file", "add", "mfa/github", str(src))
     assert result.exit_code == 0
     assert "file/mfa/github" in result.output
+    assert "do not sync" not in result.output
 
     assert invoke(runner, "file", "ls").output.strip() == "mfa/github"
 
@@ -480,6 +803,20 @@ def test_file_workflow(runner, vault_dir, tmp_path, monkeypatch):
     result = invoke(runner, "file", "get", "mfa/github", "-o", str(out))
     assert result.exit_code == 0
     assert out.read_bytes() == content
+
+
+def test_file_add_warns_when_over_100mb(runner, vault_dir, tmp_path, monkeypatch):
+    monkeypatch.setattr("sekrt.filetools.WARN_FILE_BYTES", 100)
+    invoke(runner, "init")
+    src = tmp_path / "big.bin"
+    src.write_bytes(b"x" * 101)
+
+    result = invoke(runner, "file", "add", "big", str(src))
+    assert result.exit_code == 0
+    assert "file/big" in result.output
+    assert "100 MB" in result.output
+    assert "sekrt sync" in result.output
+    assert "sekrt git reset --hard HEAD~1" in result.output
 
 
 def test_edit_note_is_raw_multiline(runner, vault_dir, monkeypatch):
@@ -513,6 +850,7 @@ def test_clone_sets_up_a_second_machine(runner, tmp_path, monkeypatch):
     # Machine 2: `sekrt clone` and nothing else.
     dest = tmp_path / "machine2"
     monkeypatch.setenv("SEKRT_VAULT", str(dest))
+    monkeypatch.setenv("SEKRT_PASSPHRASE", PASSPHRASE)
     result = runner.invoke(main, ["clone", bare])
     assert result.exit_code == 0, result.output
     assert "1 entry available" in result.output
@@ -568,6 +906,7 @@ def test_init_offers_to_clone_when_interactive(runner, tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "vault cloned" in result.output
     assert "1 entry available" in result.output
+    monkeypatch.setenv("SEKRT_PASSPHRASE", PASSPHRASE)
     assert "api/token" in runner.invoke(main, ["ls"]).output
 
 
@@ -857,6 +1196,30 @@ def test_run_exposes_the_repos_stored_env_file_by_default(
     assert env["SEKRT_EXPOSED"] == "DATABASE_URL TOKEN"
 
 
+@requires_git
+def test_env_pull_after_rename_prints_notice(
+    runner, vault_dir, tmp_path, monkeypatch
+):
+    from sekrt import envtools
+
+    invoke(runner, "init")
+    repo = make_git_repo(tmp_path / "proj", origin="git@github.com:you/old.git")
+    (repo / ".env").write_text("A=1\n")
+    monkeypatch.chdir(repo)
+    invoke(runner, "env", "push")
+    (repo / ".env").unlink()
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "set-url", "origin", "git@github.com:you/new.git"],
+        check=True,
+    )
+    monkeypatch.setattr(envtools, "find_renamed_slug", lambda *a, **k: "github.com/you/old")
+    result = invoke(runner, "env", "pull")
+    assert result.exit_code == 0
+    assert "github.com/you/old is now github.com/you/new" in result.output
+    assert ".env restored" in result.output
+    assert (repo / ".env").read_text() == "A=1\n"
+
+
 def test_shell_opens_a_subshell_holding_the_secrets(
     runner, token_vault, fake_launch, monkeypatch
 ):
@@ -1102,11 +1465,13 @@ def test_config_opens_the_panel_at_a_terminal(runner, monkeypatch):
     from sekrt.tui import colors, picker
 
     monkeypatch.setattr(picker, "interactive", lambda: True)
-    monkeypatch.setattr(colors, "edit_palette", lambda palette: Palette(accent="#00d7af"))
+    monkeypatch.setattr(
+        colors, "edit_palette", lambda palette, settings=None: Palette(accent="#00d7af")
+    )
 
     result = invoke(runner, "config")
     assert result.exit_code == 0
-    assert "colors saved" in result.output
+    assert "config saved" in result.output
     assert load_palette().accent == "#00d7af"
 
 
@@ -1115,7 +1480,7 @@ def test_cancelling_the_panel_changes_nothing(runner, monkeypatch):
     from sekrt.tui import colors, picker
 
     monkeypatch.setattr(picker, "interactive", lambda: True)
-    monkeypatch.setattr(colors, "edit_palette", lambda palette: None)
+    monkeypatch.setattr(colors, "edit_palette", lambda palette, settings=None: None)
 
     result = invoke(runner, "config")
     assert result.exit_code == 0
@@ -1153,3 +1518,122 @@ def test_a_preset_is_a_starting_point_not_a_mode(runner):
     palette = load_palette()
     assert palette.primary == PRESETS["amber"].primary  # amber's structure
     assert palette.accent == "#ff0088"  # your accent
+
+
+def test_config_show_lists_the_stock_defaults(runner):
+    output = invoke(runner, "config", "--show").output
+    assert "60 min" in output
+    assert "45 s" in output
+    assert "length" in output
+
+
+def test_config_saves_the_three_defaults_and_keeps_the_colors(runner):
+    from sekrt.prefs import load_palette, load_settings
+
+    invoke(runner, "config", "--accent", "#00d7af")
+    result = invoke(runner, "config", "--unlock", "90", "--clipboard", "15", "--length", "32")
+    assert result.exit_code == 0, result.output
+    assert "90 min" in result.output and "15 s" in result.output
+    settings = load_settings()
+    assert (settings.unlock_minutes, settings.clipboard_seconds, settings.password_length) == (
+        90, 15, 32,
+    )
+    assert load_palette().accent == "#00d7af"
+
+
+def test_config_reset_puts_the_colors_back_and_leaves_the_defaults(runner):
+    from sekrt.prefs import DEFAULT_PALETTE, load_palette, load_settings
+
+    invoke(runner, "config", "--accent", "#00d7af", "--unlock", "90")
+    result = invoke(runner, "config", "--reset")
+    assert result.exit_code == 0
+    assert load_palette() == DEFAULT_PALETTE
+    assert load_settings().unlock_minutes == 90
+
+
+def test_config_reset_refuses_to_also_set_a_default(runner):
+    result = runner.invoke(main, ["config", "--reset", "--unlock", "90"])
+    assert result.exit_code != 0
+    assert "on its own" in result.output
+
+
+def test_config_rejects_a_default_outside_its_range(runner):
+    assert runner.invoke(main, ["config", "--clipboard", "0"]).exit_code != 0
+    assert runner.invoke(main, ["config", "--length", "3"]).exit_code != 0
+    assert runner.invoke(main, ["config", "--unlock", "0"]).exit_code != 0
+
+
+def test_unlock_uses_the_configured_timeout(runner, vault_dir):
+    from sekrt.session import remaining
+
+    invoke(runner, "init")
+    invoke(runner, "config", "--unlock", "90")
+    result = invoke(runner, "unlock")
+    assert result.exit_code == 0, result.output
+    assert "unlocked for 90 min" in result.output
+    left = remaining(vault_dir)
+    assert 89 * 60 <= left <= 90 * 60
+
+
+def test_generate_and_add_use_the_configured_length(runner, vault_dir):
+    invoke(runner, "config", "--length", "32")
+    generated = invoke(runner, "generate")
+    assert generated.exit_code == 0, generated.output
+    assert len(generated.output.strip()) == 32
+
+    invoke(runner, "init")
+    invoke(runner, "add", "gen/entry", "-g", "--show")
+    assert len(invoke(runner, "get", "gen/entry").output.strip()) == 32
+
+    explicit = invoke(runner, "generate", "16")
+    assert len(explicit.output.strip()) == 16
+
+
+def test_copy_waits_the_configured_delay(monkeypatch):
+    import json
+    import subprocess
+
+    from sekrt import clipboard
+    from sekrt.prefs import save_settings
+
+    save_settings(clipboard_seconds=15)
+    seen: dict[str, int] = {}
+    monkeypatch.setattr(clipboard, "_find_tool", lambda: clipboard.ClipTool(["true"], ["true"]))
+
+    def fake_run(cmd, input=None, check=False, timeout=None):
+        return subprocess.CompletedProcess(cmd, 0)
+
+    class _Stdin:
+        def write(self, data):
+            return None
+
+        def close(self):
+            return None
+
+    class _Proc:
+        stdin = _Stdin()
+
+    def fake_popen(cmd, **kwargs):
+        seen["delay"] = json.loads(cmd[-1])["delay"]
+        return _Proc()
+
+    monkeypatch.setattr(clipboard.subprocess, "run", fake_run)
+    monkeypatch.setattr(clipboard.subprocess, "Popen", fake_popen)
+
+    clipboard.copy("secret")
+    assert seen["delay"] == 15
+    clipboard.copy("secret", clear_after=45)  # an explicit delay, even the old stock one
+    assert seen["delay"] == 45
+    seen.clear()
+    clipboard.copy("secret", clear_after=None)  # leave the clipboard alone
+    assert seen == {}
+
+
+def test_copy_says_the_configured_clear_time(runner, vault_dir, fake_clipboard):
+    invoke(runner, "init")
+    invoke(runner, "config", "--clipboard", "15")
+    invoke(runner, "add", "work/github", input="s3cret!\ns3cret!\n")
+    result = invoke(runner, "get", "work/github", "-c")
+    assert result.exit_code == 0, result.output
+    assert "clears in 15s" in result.stderr
+    assert fake_clipboard == ["s3cret!"]

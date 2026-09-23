@@ -10,6 +10,7 @@ encrypted entry per file, keyed by the repository the file belongs to, so
 
 - [The round trip](#the-round-trip)
 - [How repositories are identified](#how-repositories-are-identified)
+- [Renamed remotes](#renamed-remotes)
 - [More than one env file per repo](#more-than-one-env-file-per-repo)
 - [What it will and won't overwrite](#what-it-will-and-wont-overwrite)
 - [Reading, listing and removing](#reading-listing-and-removing)
@@ -34,8 +35,10 @@ sekrt env pull          # .env is back, 0600, byte for byte
 
 ![The .env round trip](env.gif)
 
-Note the restored file's permissions: `env pull` writes atomically and the file
-is `0600` from creation, so a restored `.env` is never briefly world-readable.
+Left is the laptop that still has `.env`; right clones the same repo (no `.env`,
+it is gitignored) and `sekrt env pull` puts it back. `env pull` writes atomically
+and the file is `0600` from creation, so a restored `.env` is never briefly
+world-readable.
 
 ## How repositories are identified
 
@@ -68,6 +71,17 @@ a remote first.
 > (`git@gitea.example.org:2222/me/proj.git`), the port becomes part of the key
 > (`gitea.example.org/2222/me/proj`). Keep the remote URL form consistent
 > across machines, or pass `--repo` to pull the key you actually stored.
+
+## Renamed remotes
+
+If the GitHub (or GitLab) repo is renamed, origin changes and the stored key
+would miss. The host still serves the old URL, so `env push` and `env pull`
+notice, move the stored files onto the new origin, and continue — no extra
+command. A clone that still has the old `origin` URL keeps working; the old
+name is remembered as an alias.
+
+A **fork** is not a rename (different owner, no redirect). Borrow its files
+with `--repo` as before.
 
 ## More than one env file per repo
 
@@ -163,15 +177,15 @@ sekrt sync              # or: sekrt autosync on, once
 ```
 
 To pull a *different* repo's env files into the directory you're standing in —
-handy for a fork, a rename, or a worktree whose remote differs — name the key:
+handy for a fork or a worktree whose remote differs — name the key:
 
 ```bash
 sekrt env pull --repo github.com/you/my-saas
 ```
 
-The stored relative paths are written under the **current** repo's root, so
-this is also how you'd migrate a project's env files to a renamed repo: pull
-with `--repo <old-slug>`, then `push` to store them under the new one.
+The stored relative paths are written under the **current** repo's root. A
+renamed origin is detected on its own (see [Renamed remotes](#renamed-remotes));
+`--repo` does not retag, it only borrows.
 
 ## Command reference
 
@@ -210,9 +224,10 @@ the repo you think you are, or the remote is named something other than
 `origin`. Check with `git remote -v`.
 
 **`no env files stored for 'github.com/you/proj'`, but you know you pushed it**
-The key is derived from `origin`, so it changed if the repo was renamed,
-transferred, or you cloned a fork. `sekrt env ls` lists every key you've
-stored; pull the right one with `--repo <slug>`.
+The key is derived from `origin`. A rename or transfer is retagged
+automatically on the next `push` or `pull` (the host still serves the old
+URL). If this is a **fork**, `sekrt env ls` lists every key you've stored;
+pull the right one with `--repo <slug>`.
 
 **`/etc/hosts is outside the repository …`**
 `push` only accepts files inside the current repo — the path relative to the

@@ -194,6 +194,24 @@ class Vault:
         self._save_config(config)
         self._commit(f"sekrt: auto-sync {'on' if enabled else 'off'}")
 
+    @property
+    def env_aliases(self) -> dict[str, str]:
+        """Old env slugs that now live under another name (repo rename)."""
+        raw = self._config().get("env_aliases") or {}
+        if not isinstance(raw, dict):
+            return {}
+        return {str(k): str(v) for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)}
+
+    def set_env_aliases(self, aliases: dict[str, str], *, commit: bool = True) -> None:
+        config = self._config()
+        if aliases:
+            config["env_aliases"] = dict(aliases)
+        else:
+            config.pop("env_aliases", None)
+        self._save_config(config)
+        if commit:
+            self._commit("sekrt: env identity aliases")
+
     # -- entries -------------------------------------------------------------
 
     def _entry_file(self, name: str) -> Path:
@@ -252,6 +270,7 @@ class Vault:
         *,
         overwrite: bool = False,
         message: str | None = None,
+        commit: bool = True,
     ) -> None:
         file = self._entry_file(name)
         if file.is_file() and not overwrite:
@@ -262,9 +281,10 @@ class Vault:
         blob = crypto.encrypt(key, json.dumps(entry).encode(), aad=name.encode())
         file.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write(file, blob)
-        self._commit(message or f"{'update' if overwrite else 'add'} {name}")
+        if commit:
+            self._commit(message or f"{'update' if overwrite else 'add'} {name}")
 
-    def delete(self, name: str, *, message: str | None = None) -> None:
+    def delete(self, name: str, *, message: str | None = None, commit: bool = True) -> None:
         file = self._entry_file(name)
         if not file.is_file():
             raise EntryNotFoundError(f"no entry named {name!r}")
@@ -273,7 +293,8 @@ class Vault:
         while parent != self.path and not any(parent.iterdir()):
             parent.rmdir()
             parent = parent.parent
-        self._commit(message or f"remove {name}")
+        if commit:
+            self._commit(message or f"remove {name}")
 
     def move(self, key: bytes, old: str, new: str, *, overwrite: bool = False) -> None:
         if old == new:

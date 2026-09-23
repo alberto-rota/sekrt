@@ -5,12 +5,16 @@ from __future__ import annotations
 import difflib
 import functools
 import json
+import os
 import re
 import shutil
+import stat
+import subprocess
 import sys
 from pathlib import Path
 
 import click
+from click.shell_completion import CompletionItem
 
 from sekrt import (
     __version__,
@@ -26,7 +30,7 @@ from sekrt import (
 )
 from sekrt.clipboard import ClipboardError
 from sekrt.crypto import CryptoError, WrongPassphraseError
-from sekrt.generate import DEFAULT_LENGTH, generate_password, generate_token
+from sekrt.generate import generate_password, generate_token
 from sekrt.prefs import PrefsError
 from sekrt.util import EditorError, edit_text
 from sekrt.vault import (
@@ -158,9 +162,70 @@ def obtain_key(vault: Vault) -> bytes:
     raise click.ClickException("wrong passphrase (3 attempts)")
 
 
+def _completion_names(ctx: click.Context) -> list[str]:
+    """Entry names the shell may offer, or nothing when the vault is locked.
+
+    ``ssh`` and ``file`` take the name without their folder prefix, the same
+    way ``ssh ls`` and ``file ls`` print it. Every other command takes the
+    full logical name. The session key is not loaded: unlock is the expiry
+    on the cache file, and the names are the vault's filenames.
+    """
+    vault = Vault()
+    if not vault.initialized or not session.unlocked(vault.path):
+        return []
+    parent = ctx.parent.info_name if ctx.parent is not None else None
+    if parent == "ssh":
+        prefix = f"{sshtools.SSH_PREFIX}/"
+    elif parent == "file":
+        prefix = f"{filetools.FILE_PREFIX}/"
+    else:
+        prefix = ""
+    names = vault.list_entries(prefix)
+    if prefix:
+        names = [name[len(prefix) :] for name in names]
+    return names
+
+
+def complete_entry(
+    ctx: click.Context, _param: click.Parameter, incomplete: str
+) -> list[CompletionItem]:
+    """Tab-complete an entry name, only while ``sekrt unlock`` is in effect."""
+    try:
+        names = _completion_names(ctx)
+    except (VaultError, OSError):
+        return []
+    return [CompletionItem(name) for name in names if name.startswith(incomplete)]
+
+
+def complete_named_entry(
+    ctx: click.Context, param: click.Parameter, incomplete: str
+) -> list[CompletionItem]:
+    """The entry half of ``-e VAR=ENTRY``. A bare ``VAR`` is not an entry name."""
+    var, sep, partial = incomplete.partition("=")
+    if not sep:
+        return []
+    return [
+        CompletionItem(f"{var}={item.value}")
+        for item in complete_entry(ctx, param, partial)
+    ]
+
+
+def entry_argument(name: str, **kwargs: object):
+    """An argument that names an entry. Completes only while the vault is unlocked."""
+    return click.argument(name, shell_complete=complete_entry, **kwargs)
+
+
 def _suggest(vault: Vault, name: str) -> str:
     matches = difflib.get_close_matches(name, vault.list_entries(), n=3, cutoff=0.5)
     return f" — did you mean: {', '.join(matches)}?" if matches else ""
+
+
+def _tilde(path: Path) -> str:
+    """``~/…`` when *path* is under ``$HOME``, otherwise the path as written."""
+    try:
+        return "~/" + path.expanduser().resolve().relative_to(Path.home().resolve()).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def _picker_entries(vault: Vault, name: str | None) -> list[str] | None:
@@ -335,16 +400,27 @@ def clone(url: str) -> None:
 
 
 @main.command()
-@click.option("--timeout", "-t", default=60, show_default=True, help="Minutes to stay unlocked.")
+@click.option(
+    "--timeout", "-t", type=int, default=None,
+    help=f"Minutes to stay unlocked (default: `sekrt config`, or {prefs.DEFAULT_UNLOCK_MINUTES}).",
+)
 @friendly_errors
-def unlock(timeout: int) -> None:
-    """Cache the vault key so commands stop prompting for a while."""
+def unlock(timeout: int | None) -> None:
+    """Cache the vault key so commands stop prompting for a while.
+
+    On a terminal, this also installs tab completion for the shell that ran
+    it, into a directory that shell already loads. zsh reads that file the
+    next time it starts.
+    """
+    if timeout is None:
+        timeout = prefs.load_settings().unlock_minutes
     vault = get_vault()
     key = obtain_key(vault)
     if not session.store_key(vault.path, key, ttl=timeout * 60):
         raise click.ClickException("no private runtime directory available for the session cache")
     where = "RAM-backed" if session.is_ram_backed() else "temp-dir (not RAM-backed)"
     click.secho(f"✔ unlocked for {timeout} min ({where} session cache)", fg="green")
+    _offer_completion_install()
 
 
 @main.command()
@@ -354,6 +430,182 @@ def lock() -> None:
     vault = get_vault()
     session.clear(vault.path)
     click.secho("✔ locked", fg="green")
+
+
+_SHELLS = frozenset({"bash", "zsh", "fish"})
+
+
+def completion_source(shell: str) -> str:
+    """The static completion script for *shell*. No entry names, no key."""
+    from click.shell_completion import get_completion_class
+
+    cls = get_completion_class(shell)
+    if cls is None:
+        raise click.ClickException(f"unsupported shell {shell!r}")
+    return cls(main, {}, "sekrt", "_SEKRT_COMPLETE").source()
+
+
+def _completion_source_quiet(shell: str) -> str:
+    """The completion script, without Click's bash-version warning.
+
+    ``sekrt completion bash`` still prints that warning. ``sekrt unlock``
+    should not: it writes the script either way.
+    """
+    import contextlib
+    import io
+
+    with contextlib.redirect_stderr(io.StringIO()):
+        return completion_source(shell)
+
+
+def invoking_shell() -> str | None:
+    """The shell that ran sekrt, when it is one we can complete for."""
+    name = _process_name(os.getppid())
+    if name in _SHELLS:
+        return name
+    fallback = Path(os.environ.get("SHELL", "")).name
+    return fallback if fallback in _SHELLS else None
+
+
+def _process_name(pid: int) -> str:
+    try:
+        comm = subprocess.check_output(
+            ["ps", "-o", "comm=", "-p", str(pid)],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+    return Path(comm.strip()).name.lstrip("-")
+
+
+def _completion_dir_ok(directory: Path) -> bool:
+    """A directory we may drop a completion script into.
+
+    It has to exist, be owned by us, and not be world-writable: the shell
+    will execute whatever lands there.
+    """
+    try:
+        st = directory.stat()
+    except OSError:
+        return False
+    if not stat.S_ISDIR(st.st_mode) or st.st_mode & stat.S_IWOTH:
+        return False
+    if hasattr(os, "getuid") and st.st_uid != os.getuid():
+        return False
+    return os.access(directory, os.W_OK)
+
+
+def _zsh_completion_dir() -> Path | None:
+    """The first safe directory already on ``$FPATH``.
+
+    zsh exported that list when it started, and ``compinit`` scans it. Writing
+    here is how a new terminal learns the script without an rc change.
+    """
+    for raw in os.environ.get("FPATH", "").split(":"):
+        if raw and _completion_dir_ok(Path(raw)):
+            return Path(raw)
+    return None
+
+
+def _bash_completion_dir() -> Path:
+    if custom := os.environ.get("BASH_COMPLETION_USER_DIR"):
+        return Path(custom) / "completions"
+    data = os.environ.get("XDG_DATA_HOME")
+    base = Path(data) if data else Path.home() / ".local" / "share"
+    return base / "bash-completion" / "completions"
+
+
+def _fish_completion_dir() -> Path:
+    config = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(config) if config else Path.home() / ".config"
+    return base / "fish" / "completions"
+
+
+def _write_if_changed(dest: Path, text: str) -> bool:
+    """Write *text* to *dest*. False when the file already holds it."""
+    data = text.encode()
+    try:
+        if dest.is_file() and dest.read_bytes() == data:
+            return False
+    except OSError:
+        pass
+    tmp = dest.with_name(dest.name + ".tmp")
+    try:
+        tmp.write_bytes(data)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, dest)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+    return True
+
+
+def install_completion(shell: str) -> tuple[Path, bool] | None:
+    """Install the completion script where *shell* loads it on its own.
+
+    Returns ``(path, changed)``, or None when this shell has nowhere safe to
+    put it. The script is static: later unlocks leave an unchanged file alone,
+    so zsh's compinit dump stays valid.
+    """
+    if shell == "zsh":
+        directory = _zsh_completion_dir()
+        if directory is None:
+            return None
+        name = "_sekrt"
+    elif shell == "bash":
+        directory = _bash_completion_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        name = "sekrt"
+    elif shell == "fish":
+        directory = _fish_completion_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        name = "sekrt.fish"
+    else:
+        return None
+    dest = directory / name
+    return dest, _write_if_changed(dest, _completion_source_quiet(shell))
+
+
+def _offer_completion_install() -> None:
+    """Install completion for an interactive unlock. A pipe never writes a file."""
+    if not _stdout_is_tty():
+        return
+    shell = invoking_shell()
+    if shell is None:
+        return
+    try:
+        installed = install_completion(shell)
+    except OSError:
+        return
+    if installed is None:
+        if shell == "zsh":
+            click.echo("  `sekrt completion zsh` prints the tab-completion snippet")
+        return
+    _path, changed = installed
+    if not changed:
+        return
+    if shell == "zsh":
+        click.echo("  entry names tab-complete in a new terminal while the vault is unlocked")
+    else:
+        click.echo("  entry names tab-complete while the vault is unlocked")
+
+
+@main.command()
+@click.argument("shell", type=click.Choice(("bash", "zsh", "fish")))
+def completion(shell: str) -> None:
+    """Print the snippet that teaches your shell to complete entry names.
+
+    ``sekrt unlock`` installs this itself on a terminal. The snippet is static:
+    it does not contain your entry names, and names are offered only while the
+    vault is unlocked.
+
+    \b
+      eval "$(sekrt completion zsh)"   # only if unlock could not install it
+      eval "$(sekrt completion bash)"  # bash 4.4 or newer
+      sekrt completion fish > ~/.config/fish/completions/sekrt.fish
+    """
+    click.echo(completion_source(shell))
 
 
 @main.command()
@@ -409,14 +661,17 @@ def _add_form(name: str | None, type_: str) -> dict[str, str]:
 
 
 @main.command()
-@click.argument("name", required=False)
+@entry_argument("name", required=False)
 @click.option("--type", "-t", "type_", type=click.Choice(ADD_TYPES),
               default="password", show_default=True)
 @click.option("--username", "-u", default=None, help="Username / login.")
 @click.option("--url", default=None, help="Associated URL.")
 @click.option("--notes", default=None, help="Free-form notes.")
 @click.option("--generate", "-g", "generate_", is_flag=True, help="Generate the secret.")
-@click.option("--length", "-L", default=DEFAULT_LENGTH, show_default=True)
+@click.option(
+    "--length", "-L", type=int, default=None,
+    help=f"Generated secret length (default: `sekrt config`, or {prefs.DEFAULT_PASSWORD_LENGTH}).",
+)
 @click.option("--no-symbols", is_flag=True, help="Generated secret: letters and digits only.")
 @click.option("--show", "-s", is_flag=True, help="Print the generated secret.")
 @click.option("--force", "-f", is_flag=True, help="Overwrite an existing entry.")
@@ -436,6 +691,8 @@ def add(name, type_, username, url, notes, generate_, length, no_symbols, show, 
       sekrt add cloud/aws-key -t api_key
       sekrt add wifi/office -t note --notes "WPA2 ..."
     """
+    if length is None:
+        length = prefs.load_settings().password_length
     vault = get_vault()
     # Everything that can fail is settled before the passphrase is asked for,
     # and the passphrase before the form draws — the picker's order, for the same
@@ -490,13 +747,13 @@ def add(name, type_, username, url, notes, generate_, length, no_symbols, show, 
         if show:
             click.echo(secret)
         elif copied:
-            click.echo(f"  generated {length}-char secret copied to clipboard (clears in 45s)")
+            click.echo(f"  generated {length}-char secret copied to clipboard ({_clears_in()})")
         else:
             click.echo("  generated secret stored — reveal with `sekrt get " + name + "`")
 
 
 @main.command()
-@click.argument("name", required=False)
+@entry_argument("name", required=False)
 @click.option("--field", "-f", "field", default=None, help="Field to output (default: the secret).")
 @click.option("--copy", "-c", "copy_", is_flag=True, help="Copy to clipboard instead of printing.")
 @friendly_errors
@@ -507,6 +764,9 @@ def get(name: str | None, field: str | None, copy_: bool) -> None:
       sekrt get cloud/aws-key        # exact name
       sekrt get aws                  # partial: pick from the matches
       sekrt get                      # pick from every entry
+
+    At a terminal, a green ``press c to copy`` waits under the secret; ``c``
+    copies it. ``-c`` copies without printing, for scripts.
     """
     vault = get_vault()
     name, key = resolve_entry(vault, name, action="print")
@@ -518,9 +778,10 @@ def get(name: str | None, field: str | None, copy_: bool) -> None:
     value = entry["data"][field]
     if copy_:
         clipboard.copy(value)
-        click.secho(f"✔ {name}:{field} copied to clipboard (clears in 45s)", fg="green", err=True)
-    else:
-        click.echo(value)
+        click.secho(f"✔ {name}:{field} copied to clipboard ({_clears_in()})", fg="green", err=True)
+        return
+    click.echo(value)
+    _offer_get_copy(value)
 
 
 def _secret_block(field: str, value: str) -> None:
@@ -550,6 +811,27 @@ def _at_terminal() -> bool:
         return False
 
 
+def _stdout_is_tty() -> bool:
+    try:
+        return sys.stdout.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _offer_get_copy(value: str) -> None:
+    """Green ``press c to copy`` under a printed secret.
+
+    Stdout must be a terminal too: ``sekrt get | pbcopy`` should not wait for
+    a key, and the prompt stays off a redirect.
+    """
+    if not _stdout_is_tty() or not _at_terminal() or not clipboard.available():
+        return
+    click.secho("press c to copy", fg="green", err=True)
+    key = clipboard.read_key()
+    if key and key.lower() == "c":
+        clipboard.copy(value)
+
+
 def _offer_copy(field: str, value: str) -> None:
     """A `press c to copy` prompt under the secret, when there is a terminal.
 
@@ -564,11 +846,11 @@ def _offer_copy(field: str, value: str) -> None:
     click.echo("\r\x1b[2K", nl=False, err=True)  # take the prompt line back
     if key and key.lower() == "c":
         clipboard.copy(value)
-        click.secho(f"  ✔ {field} copied to clipboard (clears in 45s)", fg="green", err=True)
+        click.secho(f"  ✔ {field} copied to clipboard ({_clears_in()})", fg="green", err=True)
 
 
 @main.command()
-@click.argument("name", required=False)
+@entry_argument("name", required=False)
 @click.option("--reveal", "-r", is_flag=True, help="Show secret fields in clear text.")
 @friendly_errors
 def show(name: str | None, reveal: bool) -> None:
@@ -613,11 +895,12 @@ def show(name: str | None, reveal: bool) -> None:
 
 
 @main.command()
-@click.argument("prefix", default="")
+@entry_argument("prefix", default="")
 @friendly_errors
 def ls(prefix: str) -> None:
     """List entries (optionally under a folder prefix)."""
     vault = get_vault()
+    obtain_key(vault)
     names = vault.list_entries(prefix)
     if not names:
         click.echo("(vault is empty — add something with `sekrt add`)" if not prefix
@@ -628,7 +911,7 @@ def ls(prefix: str) -> None:
 
 
 @main.command()
-@click.argument("query")
+@entry_argument("query")
 @friendly_errors
 def find(query: str) -> None:
     """Search entry names."""
@@ -638,7 +921,7 @@ def find(query: str) -> None:
 
 
 @main.command()
-@click.argument("name", required=False)
+@entry_argument("name", required=False)
 @friendly_errors
 def edit(name: str | None) -> None:
     """Edit an entry's fields in $EDITOR.
@@ -677,8 +960,8 @@ def edit(name: str | None) -> None:
 
 
 @main.command()
-@click.argument("old")
-@click.argument("new")
+@entry_argument("old")
+@entry_argument("new")
 @click.option("--force", "-f", is_flag=True, help="Overwrite the destination.")
 @friendly_errors
 def mv(old: str, new: str, force: bool) -> None:
@@ -690,7 +973,7 @@ def mv(old: str, new: str, force: bool) -> None:
 
 
 @main.command()
-@click.argument("name", required=False)
+@entry_argument("name", required=False)
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation.")
 @friendly_errors
 def rm(name: str | None, force: bool) -> None:
@@ -704,17 +987,19 @@ def rm(name: str | None, force: bool) -> None:
 
 
 @main.command()
-@click.argument("length", default=DEFAULT_LENGTH, type=int)
+@click.argument("length", required=False, type=int, default=None)
 @click.option("--no-symbols", is_flag=True, help="Letters and digits only.")
 @click.option("--token", is_flag=True, help="URL-safe token instead (for API keys).")
 @click.option("--copy", "-c", "copy_", is_flag=True, help="Copy instead of printing.")
 @friendly_errors
-def generate(length: int, no_symbols: bool, token: bool, copy_: bool) -> None:
+def generate(length: int | None, no_symbols: bool, token: bool, copy_: bool) -> None:
     """Generate a random password (not stored)."""
+    if length is None:
+        length = prefs.load_settings().password_length
     secret = generate_token() if token else generate_password(length, symbols=not no_symbols)
     if copy_:
         clipboard.copy(secret)
-        click.secho("✔ copied to clipboard (clears in 45s)", fg="green", err=True)
+        click.secho(f"✔ copied to clipboard ({_clears_in()})", fg="green", err=True)
     else:
         click.echo(secret)
 
@@ -793,6 +1078,15 @@ def env() -> None:
     """Store and restore .env files per repository."""
 
 
+def _note_realign(vault: Vault, key: bytes, slug: str | None = None) -> None:
+    """Print once if origin moved and stored env files were retagged."""
+    if slug is not None:
+        return
+    notice = envtools.realign(vault, key)
+    if notice:
+        click.secho(notice, fg="green")
+
+
 @env.command("push")
 @click.argument("files", nargs=-1, type=click.Path(path_type=Path))
 @friendly_errors
@@ -800,6 +1094,7 @@ def env_push(files: tuple[Path, ...]) -> None:
     """Encrypt .env file(s) of the current repo into the vault."""
     vault = get_vault()
     key = obtain_key(vault)
+    _note_realign(vault, key)
     for file in files or (Path(".env"),):
         name, action = envtools.push(vault, key, file)
         symbol = {"added": "+", "updated": "~", "unchanged": "="}[action]
@@ -816,6 +1111,7 @@ def env_pull(files: tuple[str, ...], slug: str | None, force: bool) -> None:
     """Restore this repo's stored .env file(s) from the vault."""
     vault = get_vault()
     key = obtain_key(vault)
+    _note_realign(vault, key, slug)
     results = envtools.pull(vault, key, files=list(files) or None, force=force, slug=slug)
     for relpath, action in results:
         symbol = {"restored": "✔", "unchanged": "=", "skipped": "!"}[action]
@@ -833,7 +1129,7 @@ def env_ls() -> None:
     if not stored:
         click.echo("(no env files stored — run `sekrt env push` inside a repo)")
         return
-    _, current = envtools.current_context()
+    current = envtools.resolve_slug(vault, envtools.current_context()[1])
     for item in stored:
         marker = "*" if item.startswith(current + "/") else " "
         click.echo(f"{marker} {item}")
@@ -846,7 +1142,7 @@ def env_show(file: str) -> None:
     """Print the stored content of an env file for the current repo."""
     vault = get_vault()
     key = obtain_key(vault)
-    _, slug = envtools.current_context()
+    slug = envtools.resolve_slug(vault, envtools.current_context()[1])
     entry = vault.read(key, envtools.entry_name(slug, file))
     click.echo(entry["data"]["content"], nl=False)
 
@@ -858,7 +1154,7 @@ def env_show(file: str) -> None:
 def env_rm(file: str, force: bool) -> None:
     """Remove a stored env file for the current repo."""
     vault = get_vault()
-    _, slug = envtools.current_context()
+    slug = envtools.resolve_slug(vault, envtools.current_context()[1])
     name = envtools.entry_name(slug, file)
     if not force and not click.confirm(f"Delete stored {name!r}?"):
         return
@@ -876,6 +1172,7 @@ def expose_options(f):
     """
     for option in reversed([
         click.option("--var", "-e", "requested", multiple=True, metavar="VAR[=ENTRY]",
+                     shell_complete=complete_named_entry,
                      help="Expose only VAR (optionally naming the entry it comes from). "
                           "Repeatable."),
         click.option("--repo", "slug", default=None,
@@ -903,7 +1200,7 @@ def _exposures(
     says so instead of asking for the passphrase first.
     """
     referenced = referenced or []
-    slug = slug or envtools.current_context()[1]
+    slug = envtools.resolve_slug(vault, slug or envtools.current_context()[1])
     stored = [] if no_env_files else envtools.stored_files(vault, slug)
     if not requested and not referenced and not stored and not runtools.might_expose(vault):
         raise click.ClickException(
@@ -1136,7 +1433,7 @@ def _ssh_form(name: str | None) -> dict[str, str]:
 
 
 @ssh.command("add")
-@click.argument("name", required=False)
+@entry_argument("name", required=False)
 @click.option("--key", "key_path", type=click.Path(path_type=Path), default=None,
               help="Existing private key to import (e.g. ~/.ssh/id_ed25519).")
 @click.option("--generate", "-g", "generate_", is_flag=True, help="Generate a new ed25519 key.")
@@ -1177,26 +1474,35 @@ def ssh_add(name, key_path, generate_, comment, force, interactive) -> None:
     )
     click.secho(f"✔ stored {entry_id}", fg="green")
     if generate_ and public:
-        click.echo("  public key (add it to GitHub/servers):\n")
-        click.echo(f"  {public.strip()}")
+        # Unindented: a double-click selects the key, and a half-width
+        # terminal (the two-pane demo) does not wrap it.
+        click.echo(public.strip())
 
 
 @ssh.command("restore")
-@click.argument("name")
+@entry_argument("name")
 @click.option("--dir", "directory", type=click.Path(path_type=Path), default=Path("~/.ssh"),
               show_default=True, help="Destination directory.")
 @click.option("--filename", default=None, help="Override the key file name.")
 @click.option("--force", "-f", is_flag=True, help="Overwrite existing files.")
+@click.option("--authorize", "-a", is_flag=True,
+              help="Also append the public key to authorized_keys in --dir.")
 @friendly_errors
-def ssh_restore(name, directory, filename, force) -> None:
-    """Write a stored keypair back to disk (0600/0644)."""
+def ssh_restore(name, directory, filename, force, authorize) -> None:
+    """Write a stored keypair back to disk (0600/0644).
+
+    With --authorize, the public key is also appended to authorized_keys
+    in --dir so this machine accepts the key for login.
+    """
     vault = get_vault()
     key = obtain_key(vault)
     written = sshtools.restore(
-        vault, key, name, directory=directory, filename=filename, force=force
+        vault, key, name, directory=directory, filename=filename, force=force,
+        authorize=authorize,
     )
     for path in written:
-        click.secho(f"✔ wrote {path}", fg="green")
+        verb = "authorized" if path.name == "authorized_keys" else "wrote"
+        click.secho(f"✔ {verb} {_tilde(path)}", fg="green")
 
 
 @ssh.command("ls")
@@ -1209,17 +1515,35 @@ def ssh_ls() -> None:
 
 
 @ssh.command("pub")
-@click.argument("name")
+@entry_argument("name")
 @friendly_errors
 def ssh_pub(name: str) -> None:
     """Print a stored key's public half (paste it into GitHub)."""
     vault = get_vault()
     key = obtain_key(vault)
     entry = vault.read(key, sshtools.full_name(name))
-    public = entry["data"].get("public")
+    public = sshtools.public_line(entry["data"])
     if not public:
         raise click.ClickException(f"no public key stored for {name!r}")
     click.echo(public.strip())
+
+
+@ssh.command("authorize")
+@entry_argument("name")
+@click.option("--dir", "directory", type=click.Path(path_type=Path), default=Path("~/.ssh"),
+              show_default=True, help="Directory containing authorized_keys.")
+@friendly_errors
+def ssh_authorize(name, directory) -> None:
+    """Append a stored public key to authorized_keys (this machine accepts it).
+
+    Does not write the private key. For a new laptop that also needs the
+    keypair on disk, use `sekrt ssh restore NAME --authorize` instead.
+    """
+    vault = get_vault()
+    key = obtain_key(vault)
+    path, added = sshtools.authorize(vault, key, name, directory=directory)
+    verb = "authorized" if added else "already in"
+    click.secho(f"✔ {verb} {_tilde(path)}", fg="green")
 
 
 # --------------------------------------------------------------------------- file
@@ -1231,7 +1555,7 @@ def file() -> None:
 
 
 @file.command("add")
-@click.argument("name")
+@entry_argument("name")
 @click.argument("path", type=click.Path(path_type=Path, exists=True, dir_okay=False))
 @click.option("--force", "-f", is_flag=True, help="Overwrite an existing entry.")
 @friendly_errors
@@ -1244,12 +1568,24 @@ def file_add(name: str, path: Path, force: bool) -> None:
     """
     vault = get_vault()
     key = obtain_key(vault)
+    size = path.stat().st_size
     entry_id = filetools.store(vault, key, name, path, force=force)
-    click.secho(f"✔ stored {entry_id} ({path.stat().st_size} bytes)", fg="green")
+    click.secho(f"✔ stored {entry_id} ({size} bytes)", fg="green")
+    if size > filetools.WARN_FILE_BYTES:
+        mb = size / (1024 * 1024)
+        click.secho(
+            f"note: this file is {mb:.1f} MB. Encryption makes it larger still, "
+            "and GitHub/GitLab reject blobs over 100 MB — `sekrt sync` will fail, "
+            "and `sekrt rm` will not drop the blob from vault history.\n"
+            "  stored locally; do not sync. undo this add with: "
+            "sekrt git reset --hard HEAD~1",
+            fg="yellow",
+            err=True,
+        )
 
 
 @file.command("get")
-@click.argument("name")
+@entry_argument("name")
 @click.option("--out", "-o", type=click.Path(path_type=Path), default=None,
               help="Destination path (default: original filename, in the current directory).")
 @click.option("--force", "-f", is_flag=True, help="Overwrite an existing file.")
@@ -1274,6 +1610,22 @@ def file_ls() -> None:
 # --------------------------------------------------------------------------- colors
 
 
+def _clears_in() -> str:
+    """The clipboard sentence, using this machine's configured delay."""
+    return f"clears in {prefs.load_settings().clipboard_seconds}s"
+
+
+def _echo_settings() -> None:
+    settings = prefs.load_settings()
+    rows = (
+        ("unlock", f"{settings.unlock_minutes} min", "unlock_minutes"),
+        ("clipboard", f"{settings.clipboard_seconds} s", "clipboard_seconds"),
+        ("length", str(settings.password_length), "password_length"),
+    )
+    for label, value, key in rows:
+        click.echo(f"{label:<10}{value:<8}{prefs.SETTING_BLURBS[key]}")
+
+
 def _swatch(color: str) -> str:
     """A block of *color* itself — click drops the styling when it isn't a terminal."""
     return click.style("███", fg=_rgb(color))
@@ -1285,14 +1637,20 @@ def _chip(name: str, palette: prefs.Palette) -> str:
     return f"{blocks} {name}"
 
 
-def _echo_palette(palette: prefs.Palette) -> None:
+def _echo_where() -> None:
+    path = prefs.prefs_path()
+    saved = path.is_file()
+    note = "" if saved else " (nothing saved yet — stock defaults)"
+    click.echo(f"\nstored in {path}{note}")
+
+
+def _echo_palette(palette: prefs.Palette, *, where: bool = True) -> None:
     for role in prefs.ROLES:
         color = getattr(palette, role)
         click.echo(f"{role:<10}{color}  {_swatch(color)}  {prefs.ROLE_BLURBS[role]}")
     click.echo(f"{'preset':<10}{prefs.preset_name(palette) or '(custom)'}")
-    path = prefs.prefs_path()
-    saved = path.is_file()
-    click.echo(f"\nstored in {path}" + ("" if saved else " (nothing saved yet — stock colors)"))
+    if where:
+        _echo_where()
 
 
 def _echo_presets() -> None:
@@ -1312,11 +1670,38 @@ def _echo_presets() -> None:
 @click.option("--primary", default=None, metavar="COLOR", help="Borders, titles, entry names.")
 @click.option("--secondary", default=None, metavar="COLOR", help="Hints and muted text.")
 @click.option("--accent", default=None, metavar="COLOR", help="Cursor, key hints, highlights.")
-@click.option("--show", "show_", is_flag=True, help="Print the current colors and exit.")
+@click.option(
+    "--unlock", type=click.IntRange(*prefs.UNLOCK_MINUTES_RANGE), default=None, metavar="MIN",
+    help=(
+        "Minutes `sekrt unlock` stays open, "
+        f"{prefs.UNLOCK_MINUTES_RANGE[0]}–{prefs.UNLOCK_MINUTES_RANGE[1]} "
+        f"(default {prefs.DEFAULT_UNLOCK_MINUTES})."
+    ),
+)
+@click.option(
+    "--clipboard", type=click.IntRange(*prefs.CLIPBOARD_SECONDS_RANGE), default=None,
+    metavar="SEC",
+    help=(
+        "Seconds before a copied secret is cleared, "
+        f"{prefs.CLIPBOARD_SECONDS_RANGE[0]}–{prefs.CLIPBOARD_SECONDS_RANGE[1]} "
+        f"(default {prefs.DEFAULT_CLIPBOARD_SECONDS})."
+    ),
+)
+@click.option(
+    "--length", "length_", type=click.IntRange(*prefs.PASSWORD_LENGTH_RANGE), default=None,
+    metavar="N",
+    help=(
+        "Length of a generated secret, "
+        f"{prefs.PASSWORD_LENGTH_RANGE[0]}–{prefs.PASSWORD_LENGTH_RANGE[1]} "
+        f"(default {prefs.DEFAULT_PASSWORD_LENGTH})."
+    ),
+)
+@click.option("--show", "show_", is_flag=True,
+              help="Print the current colors, defaults and presets.")
 @click.option("--reset", is_flag=True, help="Go back to the stock metal-and-red palette.")
 @friendly_errors
-def config(preset_, primary, secondary, accent, show_, reset) -> None:
-    """Choose the colors the TUI and the picker draw themselves in.
+def config(preset_, primary, secondary, accent, unlock, clipboard, length_, show_, reset) -> None:
+    """Choose colors, and the defaults the other commands use.
 
     With no options at a terminal this opens a few lines of inline panel: ←/→
     walks the ready-made palettes and applies each as you land on it, and the
@@ -1324,51 +1709,98 @@ def config(preset_, primary, secondary, accent, show_, reset) -> None:
     (hex like `#00d7af` or `0d7`, or a name like `cyan`). The dark background is
     fixed — it is what keeps an accent readable.
 
+    The other three are this machine's defaults, in the same file: how long
+    ``sekrt unlock`` stays open, how long a copied secret stays on the
+    clipboard, and how long a generated secret is. A flag on the command
+    (``sekrt unlock -t``, ``sekrt generate 32``, ``sekrt add -L``) still wins
+    for that one run. ``--reset`` puts the colors back and leaves these three.
+
     \b
-      sekrt config                       # the panel
+      sekrt config                       # the color panel
       sekrt config --preset teal         # a ready-made palette, no panel
       sekrt config --accent '#00d7af'    # set one color
+      sekrt config --unlock 120          # `sekrt unlock` stays open for 2 hours
+      sekrt config --clipboard 15        # copied secrets clear after 15 seconds
+      sekrt config --length 32           # generated secrets are 32 characters
       sekrt config --show                # what is set right now, and the presets
-      sekrt config --reset               # back to metal & red
+      sekrt config --reset               # colors back to metal & red
     """
     chosen = {"primary": primary, "secondary": secondary, "accent": accent}
     given = {role: value for role, value in chosen.items() if value is not None}
+    tuned = {
+        key: value
+        for key, value in (
+            ("unlock_minutes", unlock),
+            ("clipboard_seconds", clipboard),
+            ("password_length", length_),
+        )
+        if value is not None
+    }
 
     if reset:
-        if given or preset_:
-            raise click.ClickException("--reset sets everything back — pass it on its own")
+        if given or preset_ or tuned:
+            raise click.ClickException("--reset sets the colors back — pass it on its own")
         prefs.reset_palette()
         click.secho("✔ colors reset", fg="green")
-        _echo_palette(prefs.DEFAULT_PALETTE)
+        _echo_palette(prefs.DEFAULT_PALETTE, where=False)
+        _echo_settings()
+        _echo_where()
         return
 
     # A preset is a starting point: --preset teal --accent red keeps the accent.
     palette = prefs.preset(preset_) if preset_ else prefs.load_palette()
-
-    if given or preset_:
+    saved_colors = bool(given or preset_)
+    if saved_colors:
         for role, value in given.items():
             palette = palette.with_color(role, value)
-        path = prefs.save_palette(palette)
-        click.secho(f"✔ colors saved to {path}", fg="green")
-        _echo_palette(palette)
+        prefs.save_palette(palette)
+    if tuned:
+        prefs.save_settings(**tuned)
+
+    if saved_colors or tuned:
+        path = prefs.prefs_path()
+        what = "config" if tuned else "colors"
+        click.secho(f"✔ {what} saved to {path}", fg="green")
+        if saved_colors:
+            _echo_palette(palette, where=not tuned)
+        if tuned:
+            _echo_settings()
+            _echo_where()
         return
 
     from sekrt.tui import picker
 
     if show_ or not picker.interactive():
-        _echo_palette(palette)
+        _echo_palette(palette, where=False)
+        _echo_settings()
+        _echo_where()
         _echo_presets()
         return
 
     from sekrt.tui.colors import edit_palette
 
-    picked = edit_palette(palette)
-    if picked is None or picked == palette:
-        click.echo("colors unchanged")
+    before = prefs.load_settings()
+    picked = edit_palette(palette, before)
+    if picked is None:
+        click.echo("config unchanged")
         return
-    path = prefs.save_palette(picked)
-    click.secho(f"✔ colors saved to {path}", fg="green")
-    _echo_palette(picked)
+    # A test double may still return just a palette.
+    settings = None
+    if isinstance(picked, tuple):
+        picked, settings = picked
+    same_settings = settings is None or settings == before
+    if picked == palette and same_settings:
+        click.echo("config unchanged")
+        return
+    if picked != palette:
+        prefs.save_palette(picked)
+    if settings is not None and settings != before:
+        prefs.save_settings(**settings.to_dict())
+    path = prefs.prefs_path()
+    click.secho(f"✔ config saved to {path}", fg="green")
+    _echo_palette(picked, where=False)
+    _echo_settings()
+    _echo_where()
 
 
 # --------------------------------------------------------------------------- tui

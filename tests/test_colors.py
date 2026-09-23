@@ -67,7 +67,7 @@ async def test_enter_saves_and_escape_cancels():
         await _clear(pilot, app, "secondary")
         await _type(pilot, TEAL)
         await pilot.press("enter")
-    assert app.return_value == Palette(secondary=TEAL)
+    assert app.return_value[0] == Palette(secondary=TEAL)
 
     app = ColorsApp(DEFAULT_PALETTE)
     async with app.run_test(size=(90, 10)) as pilot:
@@ -90,11 +90,11 @@ async def test_ctrl_r_restores_the_stock_colors():
 
 
 async def test_the_panel_claims_only_the_lines_it_needs():
-    """It draws inline, in the middle of your scrollback: 10 rows, no more."""
+    """It draws inline, in the middle of your scrollback: the rows it has, no more."""
     app = ColorsApp(DEFAULT_PALETTE)
     async with app.run_test(size=(90, 14)) as pilot:
         await pilot.pause()
-        assert app.screen.styles.height.value == 10
+        assert app.screen.styles.height.value == 13
 
 
 def test_preview_shows_every_chosen_color():
@@ -146,7 +146,7 @@ async def test_arrowing_the_preset_row_applies_each_palette_as_you_land_on_it():
         assert bar.selected == PRESET_NAMES[-1]
 
         await pilot.press("enter")
-    assert app.return_value == PRESETS[PRESET_NAMES[-1]]
+    assert app.return_value[0] == PRESETS[PRESET_NAMES[-1]]
 
 
 async def test_a_hand_typed_color_deselects_the_preset_and_a_match_reselects_it():

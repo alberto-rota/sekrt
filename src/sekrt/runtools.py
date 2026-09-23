@@ -145,7 +145,7 @@ class Resolver:
         self.vault = vault
         self.key = key
         self.env_files = env_files
-        self.slug = slug or envtools.current_context(cwd)[1]
+        self.slug = envtools.resolve_slug(vault, slug or envtools.current_context(cwd)[1])
         self._stored: dict[str, Exposure] | None = None
         self._bulk: dict[str, Exposure] | None = None
         # Variables two entries both answer to, filled in by `bulk`.

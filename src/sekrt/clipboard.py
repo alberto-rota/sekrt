@@ -20,6 +20,10 @@ from dataclasses import dataclass
 DEFAULT_CLEAR_AFTER = 45
 KEY_TIMEOUT = 20  # seconds a `press c to copy` prompt waits before giving up
 
+# `copy()` with no delay reads `sekrt config`. This sentinel is how "omitted"
+# stays different from an explicit None, which still means "do not clear".
+_FROM_CONFIG = object()
+
 
 class ClipboardError(Exception):
     """No usable clipboard tool was found (or copying failed)."""
@@ -100,8 +104,19 @@ except Exception:
 """
 
 
-def copy(text: str, clear_after: int | None = DEFAULT_CLEAR_AFTER) -> None:
-    """Copy *text* to the clipboard, scheduling an auto-clear."""
+def copy(text: str, clear_after: object = _FROM_CONFIG) -> None:
+    """Copy *text* to the clipboard, scheduling an auto-clear.
+
+    With no *clear_after*, the delay is the one from ``sekrt config`` (45 seconds
+    when nothing is saved). Pass an int to override it for this copy, or ``0``
+    / ``None`` to leave the clipboard alone.
+    """
+    if clear_after is _FROM_CONFIG:
+        from sekrt.prefs import load_settings
+
+        clear_after = load_settings().clipboard_seconds
+    elif not isinstance(clear_after, int) and clear_after is not None:
+        raise TypeError(f"clear_after must be an int, not {type(clear_after).__name__}")
     tool = _find_tool()
     if tool is None:
         raise ClipboardError(

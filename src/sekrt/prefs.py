@@ -1,15 +1,17 @@
-"""Look-and-feel preferences: the colors sekrt draws itself in.
+"""Machine preferences: the colors sekrt draws itself in, and the defaults the
+commands use when a flag is left off.
 
-These are settings, not secrets, and they describe *this machine's* terminal —
-so they live in the XDG config dir (``~/.config/sekrt/config.json``) rather than
-in the vault. The vault is a git repo pushed to a remote: putting a color there
-would make every tweak a commit, and force the same palette on every machine
-that clones it.
+These are settings, not secrets, and they describe *this machine* — so they
+live in the XDG config dir (``~/.config/sekrt/config.json``) rather than in the
+vault. The vault is a git repo pushed to a remote: putting a color or a timeout
+there would make every tweak a commit, and force the same choice on every
+machine that clones it.
 
-Nothing here imports the TUI, so the CLI can read and write the palette without
+Nothing here imports the TUI, so the CLI can read and write the file without
 paying for a Textual import. A file that has been hand-edited into nonsense is
-never fatal: :func:`load_palette` falls back to the default color per field, so
-a typo costs you a color rather than the ability to open your vault.
+never fatal: :func:`load_palette` and :func:`load_settings` fall back to the
+default per field, so a typo costs you that one value rather than the ability
+to open your vault.
 """
 
 from __future__ import annotations
@@ -25,6 +27,22 @@ from sekrt import compat
 
 PREFS_NAME = "config.json"
 PREFS_VERSION = 1
+
+# Stock command defaults — the same numbers the commands used before these were
+# configurable (`session.DEFAULT_TTL` is 60 minutes, `clipboard.DEFAULT_CLEAR_AFTER`
+# is 45 seconds, `generate.DEFAULT_LENGTH` is 20). A saved value replaces the
+# stock one; a flag on the command still wins for that one run.
+DEFAULT_UNLOCK_MINUTES = 60
+DEFAULT_CLIPBOARD_SECONDS = 45
+DEFAULT_PASSWORD_LENGTH = 20
+
+# What `sekrt config` will accept. Outside this, a hand-edited value is ignored
+# and the stock default is used — same rule as a color that does not parse.
+UNLOCK_MINUTES_RANGE = (1, 7 * 24 * 60)  # 1 minute .. 7 days
+CLIPBOARD_SECONDS_RANGE = (1, 10 * 60)  # 1 second .. 10 minutes
+PASSWORD_LENGTH_RANGE = (4, 128)  # generate_password needs one char per class
+
+SETTING_KEYS = ("unlock_minutes", "clipboard_seconds", "password_length")
 
 # The stock look: brushed metal with a red accent.
 DEFAULT_PRIMARY = "#aaaaaa"
@@ -105,11 +123,46 @@ def preset_name(palette: Palette) -> str | None:
     """The name of the preset *palette* is, or None once it has been hand-tuned."""
     return next((name for name, known in PRESETS.items() if known == palette), None)
 
+
 # What each color paints, for `sekrt config` to label its fields with.
 ROLE_BLURBS = {
     "primary": "borders, titles, entry names",
     "secondary": "hints and muted text",
     "accent": "cursor, key hints, highlights",
+}
+
+
+@dataclass(frozen=True)
+class Settings:
+    """The three defaults that are not colors.
+
+    ``unlock_minutes`` is how long ``sekrt unlock`` caches the key,
+    ``clipboard_seconds`` is how long a copied secret stays, and
+    ``password_length`` is what ``sekrt generate``, ``sekrt add -g`` and the
+    TUI's generator use when no length is given.
+    """
+
+    unlock_minutes: int = DEFAULT_UNLOCK_MINUTES
+    clipboard_seconds: int = DEFAULT_CLIPBOARD_SECONDS
+    password_length: int = DEFAULT_PASSWORD_LENGTH
+
+    def to_dict(self) -> dict[str, int]:
+        return {key: getattr(self, key) for key in SETTING_KEYS}
+
+
+DEFAULT_SETTINGS = Settings()
+
+_SETTING_RANGES = {
+    "unlock_minutes": UNLOCK_MINUTES_RANGE,
+    "clipboard_seconds": CLIPBOARD_SECONDS_RANGE,
+    "password_length": PASSWORD_LENGTH_RANGE,
+}
+
+# How `sekrt config --show` labels each one.
+SETTING_BLURBS = {
+    "unlock_minutes": "how long `sekrt unlock` stays open",
+    "clipboard_seconds": "how long a copied secret stays",
+    "password_length": "characters in a generated secret",
 }
 
 
@@ -142,13 +195,41 @@ def prefs_path() -> Path:
     return Path(config_home).expanduser() / "sekrt" / PREFS_NAME
 
 
+def _read() -> dict:
+    """The config file as a dict, or ``{}`` when it is missing or not an object."""
+    try:
+        stored = json.loads(prefs_path().read_text())
+    except (OSError, ValueError):
+        return {}
+    return stored if isinstance(stored, dict) else {}
+
+
+def _write(data: dict) -> Path:
+    """Write *data*, keeping every key except a rewritten ``version``.
+
+    An empty document is removed, so "nothing saved" stays "no file" rather
+    than a file that only says ``version``.
+    """
+    path = prefs_path()
+    body = {key: value for key, value in data.items() if key != "version"}
+    if not body:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise PrefsError(f"cannot remove {path}: {exc}") from exc
+        return path
+    try:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        payload = {"version": PREFS_VERSION, **body}
+        path.write_text(json.dumps(payload, indent=2) + "\n")
+    except OSError as exc:
+        raise PrefsError(f"cannot write {path}: {exc}") from exc
+    return path
+
+
 def load_palette() -> Palette:
     """The stored palette, falling back to the default color for anything unusable."""
-    path = prefs_path()
-    try:
-        stored = json.loads(path.read_text())["colors"]
-    except (OSError, ValueError, KeyError, TypeError):
-        return DEFAULT_PALETTE
+    stored = _read().get("colors")
     if not isinstance(stored, dict):
         return DEFAULT_PALETTE
 
@@ -162,22 +243,57 @@ def load_palette() -> Palette:
 
 
 def save_palette(palette: Palette) -> Path:
-    """Write *palette* to the config file (creating the directory). Returns the path."""
-    path = prefs_path()
-    try:
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        payload = {"version": PREFS_VERSION, "colors": palette.to_dict()}
-        path.write_text(json.dumps(payload, indent=2) + "\n")
-    except OSError as exc:
-        raise PrefsError(f"cannot write {path}: {exc}") from exc
-    return path
+    """Write *palette*, leaving unlock, clipboard, length and any other keys."""
+    data = _read()
+    data["colors"] = palette.to_dict()
+    return _write(data)
 
 
 def reset_palette() -> Path:
-    """Forget the stored palette, going back to the stock colors."""
-    path = prefs_path()
-    try:
-        path.unlink(missing_ok=True)
-    except OSError as exc:
-        raise PrefsError(f"cannot remove {path}: {exc}") from exc
-    return path
+    """Forget the stored palette. Other settings in the file stay."""
+    data = _read()
+    data.pop("colors", None)
+    return _write(data)
+
+
+def _coerce_setting(key: str, value: object) -> int:
+    """*value* when it is an in-range int, otherwise the stock default for *key*."""
+    default = getattr(DEFAULT_SETTINGS, key)
+    lo, hi = _SETTING_RANGES[key]
+    if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+        return default
+    return value
+
+
+def check_setting(key: str, value: int) -> int:
+    """Validate a value the user just asked to save. Raises PrefsError."""
+    if key not in _SETTING_RANGES:
+        raise PrefsError(f"unknown setting {key!r} — expected one of {', '.join(SETTING_KEYS)}")
+    lo, hi = _SETTING_RANGES[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise PrefsError(f"{key} must be a whole number")
+    if not lo <= value <= hi:
+        raise PrefsError(f"{key} must be between {lo} and {hi}")
+    return value
+
+
+def load_settings() -> Settings:
+    """The stored defaults, falling back per field when a value is unusable."""
+    stored = _read()
+    return Settings(**{key: _coerce_setting(key, stored.get(key)) for key in SETTING_KEYS})
+
+
+def save_settings(**updates: int) -> Path:
+    """Write the given settings, leaving the palette and any other keys.
+
+    A value equal to the stock default is dropped, so the file only records
+    what this machine actually changed. Returns the config path.
+    """
+    data = _read()
+    for key, value in updates.items():
+        checked = check_setting(key, value)
+        if checked == getattr(DEFAULT_SETTINGS, key):
+            data.pop(key, None)
+        else:
+            data[key] = checked
+    return _write(data)

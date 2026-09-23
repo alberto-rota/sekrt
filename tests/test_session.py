@@ -10,8 +10,27 @@ def test_store_load_clear(tmp_path):
     assert session.store_key(vault_path, b"k" * 32, ttl=60)
     assert session.load_key(vault_path) == b"k" * 32
     assert session.remaining(vault_path) > 0
+    assert session.unlocked(vault_path)
     session.clear(vault_path)
     assert session.load_key(vault_path) is None
+    assert not session.unlocked(vault_path)
+
+
+def test_unlocked_does_not_decode_or_delete(tmp_path, monkeypatch):
+    """Tab completion asks only whether the session is live."""
+    vault_path = tmp_path / "vault"
+    session.store_key(vault_path, b"k" * 32, ttl=60)
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("unlocked must not decode the cached key")
+
+    monkeypatch.setattr(session.base64, "b64decode", boom)
+    assert session.unlocked(vault_path)
+    assert session._session_file(vault_path).is_file()
+
+    session.store_key(vault_path, b"k" * 32, ttl=-1)
+    assert not session.unlocked(vault_path)
+    assert session._session_file(vault_path).is_file()  # load_key reaps it, this does not
 
 
 def test_expired_key_not_returned(tmp_path):

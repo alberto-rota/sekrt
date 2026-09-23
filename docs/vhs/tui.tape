@@ -1,5 +1,7 @@
-# Regenerate: run quickstart.tape first (populates the demo vault), then
-# `vhs docs/vhs/tui.tape` (from repo root, with sekrt installed)
+# Regenerate: run quickstart.tape first (populates /tmp/sekrt-vhs-demo), then
+# `vhs docs/vhs/tui.tape` (from repo root, with sekrt installed). The vault
+# also holds an API key and a stored .env, so a `git` filter matches more
+# than work/github.
 Output docs/tui.gif
 
 Require sekrt

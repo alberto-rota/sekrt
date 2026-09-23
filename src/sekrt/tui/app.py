@@ -13,8 +13,18 @@ from textual.widgets import Button, Footer, Header, Input, Label, Select, Static
 from sekrt import clipboard, gitsync, session
 from sekrt.crypto import CryptoError, WrongPassphraseError
 from sekrt.generate import generate_password
-from sekrt.prefs import DEFAULT_PALETTE, Palette, PrefsError, load_palette, save_palette
-from sekrt.tui.colors import EDITOR_CSS, NAV_HINT, PaletteEditor
+from sekrt.prefs import (
+    DEFAULT_PALETTE,
+    DEFAULT_SETTINGS,
+    Palette,
+    PrefsError,
+    Settings,
+    load_palette,
+    load_settings,
+    save_palette,
+    save_settings,
+)
+from sekrt.tui.colors import EDITOR_CSS, MODAL_HINT, PaletteEditor
 from sekrt.tui.theme import BACKGROUND, BADGE, apply_palette
 from sekrt.vault import Vault, VaultError, new_entry, primary_field
 
@@ -172,8 +182,9 @@ class EntryModal(WindowChrome, ModalScreen["dict | None"]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-gen":
-            self.query_one("#f-secret", Input).value = generate_password()
-            self.notify("generated a 20-char password", timeout=3)
+            length = load_settings().password_length
+            self.query_one("#f-secret", Input).value = generate_password(length)
+            self.notify(f"generated a {length}-char password", timeout=3)
         elif event.button.id == "btn-save":
             self._save()
         elif event.button.id == "btn-cancel":
@@ -199,29 +210,33 @@ class EntryModal(WindowChrome, ModalScreen["dict | None"]):
         self.dismiss(None)
 
 
-class PaletteModal(WindowChrome, ModalScreen["Palette | None"]):
-    """The color editor, live: the TUI behind it repaints as the fields change.
+class PaletteModal(WindowChrome, ModalScreen["tuple[Palette, Settings] | None"]):
+    """Colors and the three defaults, live: the TUI behind it repaints as you edit.
 
     Escape puts the palette you arrived with back on screen, so backing out of
-    a bad experiment costs nothing.
+    a bad experiment costs nothing. The numeric defaults are not applied until
+    you save.
     """
 
     BINDINGS = [
         Binding("enter", "save", "Save", show=False),  # what saves from the preset row
         Binding("escape", "cancel", "Cancel"),
         Binding("ctrl+r", "defaults", "Defaults"),
+        Binding("down,ctrl+n", "move(1)", "next", priority=True, show=False),
+        Binding("up,ctrl+p", "move(-1)", "previous", priority=True, show=False),
     ]
-    WINDOW_TITLE = "sekrt — colors"
+    WINDOW_TITLE = "sekrt — config"
 
-    def __init__(self, palette: Palette) -> None:
+    def __init__(self, palette: Palette, settings: Settings) -> None:
         super().__init__()
         self.original = palette
+        self.settings = settings
 
     def compose(self) -> ComposeResult:
         with Vertical(id="palette-box"):
-            yield Label("Colors", id="palette-title")
-            yield PaletteEditor(self.original)
-            yield Label(NAV_HINT, id="palette-hint")
+            yield Label("Config", id="palette-title")
+            yield PaletteEditor(self.original, self.settings)
+            yield Label(MODAL_HINT, id="palette-hint")
             with Horizontal(classes="buttons"):
                 yield Button("Defaults", id="btn-defaults")
                 yield Button("Save", variant="primary", id="btn-save")
@@ -242,10 +257,20 @@ class PaletteModal(WindowChrome, ModalScreen["Palette | None"]):
             self.action_cancel()
 
     def action_save(self) -> None:
-        self.dismiss(self.query_one(PaletteEditor).palette)
+        editor = self.query_one(PaletteEditor)
+        assert editor.settings is not None
+        self.dismiss((editor.palette, editor.settings))
 
     def action_defaults(self) -> None:
-        self.query_one(PaletteEditor).set_palette(DEFAULT_PALETTE)
+        editor = self.query_one(PaletteEditor)
+        editor.set_palette(DEFAULT_PALETTE)
+        editor.set_settings(DEFAULT_SETTINGS)
+
+    def action_move(self, delta: int) -> None:
+        if delta > 0:
+            self.focus_next()
+        else:
+            self.focus_previous()
 
     def action_cancel(self) -> None:
         apply_palette(self.app, self.original)
@@ -366,7 +391,7 @@ class SekrtApp(App[None]):
         Binding("r", "toggle_reveal", "Reveal"),
         Binding("s", "sync", "Sync"),
         Binding("slash", "focus_search", "Filter", key_display="/"),
-        Binding("t", "colors", "Colors"),
+        Binding("t", "colors", "Config"),
         Binding("l", "lock", "Lock"),
         Binding("q", "quit", "Quit"),
     ]
@@ -563,7 +588,8 @@ class SekrtApp(App[None]):
         except clipboard.ClipboardError as exc:
             self.notify(str(exc), severity="error")
             return
-        self.notify(f"{field} copied — clipboard clears in 45s", timeout=4)
+        seconds = load_settings().clipboard_seconds
+        self.notify(f"{field} copied — clipboard clears in {seconds}s", timeout=4)
 
     def action_copy_secret(self) -> None:
         if self.current_entry is not None:
@@ -677,26 +703,32 @@ class SekrtApp(App[None]):
     # -- colors --------------------------------------------------------------
 
     def action_colors(self) -> None:
-        self.push_screen(PaletteModal(self.palette), self._on_palette_chosen)
+        self.push_screen(
+            PaletteModal(self.palette, load_settings()), self._on_palette_chosen
+        )
 
-    def _on_palette_chosen(self, palette: Palette | None) -> None:
-        """Store a saved palette on disk and on screen; a cancelled one needs nothing.
+    def _on_palette_chosen(self, chosen: tuple[Palette, Settings] | None) -> None:
+        """Store a saved palette and the defaults; a cancelled edit needs nothing.
 
         Live editing only repaints the theme (borders, footer, cursor); the text
         whose colors are written into its markup is redrawn here, once, so a
-        cancelled experiment leaves it untouched.
+        cancelled experiment leaves it untouched. The numeric defaults are
+        written alongside the colors and take effect on the next copy, unlock,
+        or generated secret.
         """
-        if palette is None:
+        if chosen is None:
             return
+        palette, settings = chosen
         self.palette = palette
         apply_palette(self, palette)
         self.repaint_markup()
         try:
-            path = save_palette(palette)
+            save_palette(palette)
+            path = save_settings(**settings.to_dict())
         except PrefsError as exc:
             self.notify(str(exc), severity="error")
             return
-        self.notify(f"colors saved to {path}", timeout=4)
+        self.notify(f"config saved to {path}", timeout=4)
 
     def repaint_markup(self) -> None:
         """Redraw the text whose colors are baked into markup, not the theme."""

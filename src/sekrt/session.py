@@ -20,6 +20,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -143,6 +144,31 @@ def remaining(vault_path: Path) -> int:
         return max(0, int(data["expires"]) - int(time.time()))
     except (OSError, ValueError, KeyError):
         return 0
+
+
+# The expiry field alone. Completion checks this and must not json-decode the
+# file: the cached key sits next to it, and tab-completion has no business
+# loading that key into a process.
+_EXPIRES_RE = re.compile(rb'"expires"\s*:\s*(\d+)')
+
+
+def unlocked(vault_path: Path) -> bool:
+    """True when a non-expired session cache exists for *vault_path*.
+
+    Reads the expiry and nothing else. The cached key stays in the file,
+    undecoded, and an expired file is left for ``load_key`` to reap.
+    """
+    f = _session_file(vault_path)
+    if f is None or not f.is_file():
+        return False
+    try:
+        raw = f.read_bytes()
+    except OSError:
+        return False
+    match = _EXPIRES_RE.search(raw)
+    if match is None:
+        return False
+    return int(match.group(1)) >= time.time()
 
 
 def clear(vault_path: Path) -> None:
