@@ -14,6 +14,32 @@ A moden secret manager for ALL your secrets. With `sekrt` you store and retrieve
 
 ![sekrt — the CLI and the TUI in 20 seconds](https://raw.githubusercontent.com/alberto-rota/sekrt/main/docs/hero.gif)
 
+## Contents
+
+- [`sekrt` features](#sekrt-features)
+  - [Password Management](#password-management)
+  - [We push your `.env`](#we-push-your-env)
+  - [Run commands that need secrets securely](#run-commands-that-need-secrets-securely)
+- [Installation](#installation)
+- [Setting up](#setting-up)
+- [Quickstart](#quickstart)
+- [Working with an entry](#working-with-an-entry)
+- [Unlocking the vault](#unlocking-the-vault)
+- [The `.env` workflow](#the-env-workflow)
+  - [How are repositoties detected correctly for .env syncronization?](#how-are-repositoties-detected-correctly-for-env-syncronization)
+  - [Can I rename my repo after I synced its .env?](#can-i-rename-my-repo-after-i-synced-its-env)
+  - [What if I need a different .env per clone?](#what-if-i-need-a-different-env-per-clone)
+  - [How do I deal with forks and worktrees?](#how-do-i-deal-with-forks-and-worktrees)
+- [Running commands that need secrets](#running-commands-that-need-secrets)
+- [SSH keys management](#ssh-keys-management)
+- [Using `sekrt` to encrypt and store any file](#using-sekrt-to-encrypt-and-store-any-file)
+- [The TUI [WIP]](#the-tui-wip)
+- [Configuration](#configuration)
+- [Vault location & configuration](#vault-location--configuration)
+- [CLI reference](#cli-reference)
+- [Why not just `pass`?](#why-not-just-pass)
+- [License](#license)
+
 ## `sekrt` features
 ### Password Management
 `sektr` can be a simple password manager. You easily store a password, then `sekrt` encrypts it and stores it into a private repo. You`ll retrieve it with your main passphrase whenever you want.
