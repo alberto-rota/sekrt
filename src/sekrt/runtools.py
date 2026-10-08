@@ -253,6 +253,7 @@ def resolve(
     *,
     requested: tuple[str, ...] | list[str] = (),
     referenced: tuple[str, ...] | list[str] = (),
+    everything: bool | None = None,
 ) -> tuple[list[Exposure], list[tuple[str, str]]]:
     """What to expose, and what could not be found.
 
@@ -271,10 +272,15 @@ def resolve(
     anything — and one that resolves nowhere is reported rather than fatal, since
     a shell command is free to mention variables of its own making.
 
+    *everything* overrides whether the first layer is included at all; left as
+    None it is "only when nothing was named", which is what the CLI does.
+
     Returns ``(exposures, unresolved)``, where *unresolved* pairs each name with
     why it could not be answered.
     """
-    chosen: dict[str, Exposure] = {} if requested else dict(resolver.bulk)
+    if everything is None:
+        everything = not requested
+    chosen: dict[str, Exposure] = dict(resolver.bulk) if everything else {}
     chosen.update(resolver.stored)
     for item in requested:
         var, sep, entry_name = item.partition("=")

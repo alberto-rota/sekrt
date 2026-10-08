@@ -1414,6 +1414,7 @@ def ssh() -> None:
 
 
 SSH_SOURCES = ("generate", "import")
+SSH_DEFAULT_KEY = "~/.ssh/id_ed25519"
 
 
 def _ssh_form(name: str | None) -> dict[str, str]:
@@ -1425,7 +1426,8 @@ def _ssh_form(name: str | None) -> dict[str, str]:
             form.Field("name", "name", placeholder="deploy-key", value=name or "",
                        required=True),
             form.Field("source", "source", choices=SSH_SOURCES),
-            form.Field("key", "key file", placeholder="~/.ssh/id_ed25519  (import only)"),
+            form.Field("key", "key file",
+                       placeholder=f"{SSH_DEFAULT_KEY}  (import only, enter keeps it)"),
             form.Field("comment", "comment", placeholder="optional"),
         ],
         title="new ssh key",
@@ -1454,9 +1456,7 @@ def ssh_add(name, key_path, generate_, comment, force, interactive) -> None:
         filled = _ssh_form(name)
         name, comment = filled["name"], filled["comment"] or comment
         generate_ = filled["source"] == "generate"
-        key_path = None if generate_ else Path(filled["key"] or "")
-        if not generate_ and not filled["key"]:
-            raise click.ClickException("importing needs a key file — nothing saved")
+        key_path = None if generate_ else Path(filled["key"] or SSH_DEFAULT_KEY)
     if bool(key_path) == generate_:
         raise click.ClickException("choose exactly one of --key PATH or --generate")
     if generate_:
@@ -1801,6 +1801,27 @@ def config(preset_, primary, secondary, accent, unlock, clipboard, length_, show
     _echo_palette(picked, where=False)
     _echo_settings()
     _echo_where()
+
+
+# --------------------------------------------------------------------------- mcp
+
+
+@main.command()
+def mcp() -> None:
+    """Serve the vault to an AI agent over MCP (stdio), without revealing secrets.
+
+    Meant to be started by an MCP client, not typed: it speaks JSON-RPC on
+    stdin/stdout. No tool returns a secret value. The agent runs commands with
+    secrets in their environment (output redacted), restores .env files, stores
+    generated secrets and scans the repo for leaks. It never asks for the
+    passphrase: `sekrt unlock` is what grants access, `sekrt lock` revokes it.
+
+    \b
+      claude mcp add sekrt -- sekrt mcp
+    """
+    from sekrt import mcpserver
+
+    mcpserver.serve()
 
 
 # --------------------------------------------------------------------------- tui

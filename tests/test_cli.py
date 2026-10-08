@@ -1396,12 +1396,20 @@ def test_the_ssh_form_can_import_a_key_file(runner, vault_dir, tmp_path, fake_fo
     assert "stored ssh/imported" in result.output
 
 
-def test_the_ssh_form_needs_a_file_to_import(runner, vault_dir, fake_form):
+def test_the_ssh_form_imports_id_ed25519_by_default(
+    runner, vault_dir, tmp_path, monkeypatch, fake_form,
+):
     invoke(runner, "init")
+    invoke(runner, "ssh", "add", "source-key", "--generate")
+    home = tmp_path / "home"
+    invoke(runner, "ssh", "restore", "source-key", "--dir", str(home / ".ssh"),
+           "--filename", "id_ed25519")
+    monkeypatch.setenv("HOME", str(home))
+
     fake_form.answer = {"name": "x", "source": "import", "key": "", "comment": ""}
-    result = runner.invoke(main, ["ssh", "add"])
-    assert result.exit_code != 0
-    assert "needs a key file" in result.output
+    result = invoke(runner, "ssh", "add")
+    assert result.exit_code == 0, result.output
+    assert "stored ssh/x" in result.output
 
 
 # --------------------------------------------------------------------------- colors

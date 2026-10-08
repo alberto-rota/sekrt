@@ -20,6 +20,7 @@ A moden secret manager for ALL your secrets. With `sekrt` you store and retrieve
   - [Password Management](#password-management)
   - [We push your `.env`](#we-push-your-env)
   - [Run commands that need secrets securely](#run-commands-that-need-secrets-securely)
+  - [Give your AI agent your secrets, not their values](#give-your-ai-agent-your-secrets-not-their-values)
 - [Installation](#installation)
 - [Setting up](#setting-up)
 - [Quickstart](#quickstart)
@@ -31,6 +32,7 @@ A moden secret manager for ALL your secrets. With `sekrt` you store and retrieve
   - [What if I need a different .env per clone?](#what-if-i-need-a-different-env-per-clone)
   - [How do I deal with forks and worktrees?](#how-do-i-deal-with-forks-and-worktrees)
 - [Running commands that need secrets](#running-commands-that-need-secrets)
+- [Letting an AI agent use your secrets (MCP)](#letting-an-ai-agent-use-your-secrets-mcp)
 - [SSH keys management](#ssh-keys-management)
 - [Using `sekrt` to encrypt and store any file](#using-sekrt-to-encrypt-and-store-any-file)
 - [The TUI [WIP]](#the-tui-wip)
@@ -49,6 +51,9 @@ They told you not to push your `.env` files. We agree, but you can still push it
 
 ### Run commands that need secrets securely
 `sekrt run` unlocks the vault and gives **one process** decrypted secrets as environment variables; when your process ends, they are gone. Vault `password` and `api_key` entries work on their own (the last path segment becomes the variable: `tokens/uv-publish-token` is `$UV_PUBLISH_TOKEN`); stored `.env` files from `sekrt env push` are an extra source. With nothing named, that command gets every such vault entry plus this repo's `.env`; `-e UV_PUBLISH_TOKEN` is just that one (`--no-env-files` if you don't want the `.env` too). `sekrt shell` opens a subshell until you `exit`, but it is stricter: no flags means this repo's `.env` only, `-e` names what you want, `--all` is the whole vault.
+
+### Give your AI agent your secrets, not their values
+`sekrt mcp` is an [MCP](https://modelcontextprotocol.io) server for Claude Code, Cursor and any other MCP client. The agent can run your tests with the API key they need, pull a fresh clone's `.env`, or check the repo for leaked keys before committing. No tool ever returns a secret value, and output that echoes one comes back redacted. See [the MCP section](#letting-an-ai-agent-use-your-secrets-mcp).
 
 ## Installation
 `sekrt` ships as a Python package. The suggested route in as a [uv](https://docs.astral.sh/uv/) tool
@@ -232,6 +237,39 @@ With this command you open a subshell where your secrets get automatically sourc
 > [!IMPORTANT]
 Type `exit` to go back to the default shell. The `(sekrt)` prompt is helpful in indicating if your shell is currently expoing secrets.
 
+## Letting an AI agent use your secrets (MCP)
+
+Coding agents need secrets the same way your build does: to run integration tests against a real API, to `uv publish`, to set up a repo they just cloned. They almost never need to *read* one, and anything they read ends up in a transcript. `sekrt mcp` gives an agent the first without the second.
+
+Register it once with your MCP client. For Claude Code:
+```bash
+claude mcp add sekrt -- sekrt mcp
+```
+Any other client takes the same command in its config:
+```json
+{ "mcpServers": { "sekrt": { "command": "sekrt", "args": ["mcp"] } } }
+```
+
+**Access is granted by `sekrt unlock`, not by the agent.** The server never prompts and never reads `$SEKRT_PASSPHRASE`; it uses only the key that `sekrt unlock` cached. While the vault is locked, every tool that decrypts something tells the agent to ask you to unlock it. You decide how long the agent gets (`sekrt unlock -t 30`), and `sekrt lock` revokes it immediately. Don't put your passphrase in an MCP config file.
+
+| Tool | What it does | Unlock |
+| --- | --- | --- |
+| `status` | vault path, entry count, locked or not, remote, this repo's stored `.env` files | no |
+| `list_entries` | entry names, each with the variable it is exposed as (`api/my-token` → `MY_TOKEN`) | no |
+| `describe_entry` | type, dates, username, url; every secret field shows as `<hidden>` | yes |
+| `run_command` | `sekrt run` for the agent: secrets go into the command's environment, output comes back with each value replaced by `***VAR***` | yes |
+| `env_status` | this repo's `.env` files vs. the vault: missing, differing (by variable *name*), not stored, and what `.env.example` expects that nothing defines | yes |
+| `env_pull` / `env_push` | `sekrt env pull` / `push`; file contents are never returned | yes |
+| `generate_secret` | generate a password or token and store it, without returning it | yes |
+| `scan_for_leaks` | look for any vault password, API key or stored `.env` value in the files git would commit; reports file, line and entry name | yes |
+
+`run_command` is stricter than `sekrt run`: with nothing named it does **not** hand over the whole vault. The command gets the variables it references (`$MY_TOKEN`), the ones listed in `vars`, and this repo's stored `.env` files. Exposing everything takes an explicit `all_vault: true`.
+
+There is no `get`, no `--reveal`, no `rm`, `mv`, `sync` or `passwd`. Those stay in your terminal.
+
+> [!CAUTION]
+> Redaction is a seatbelt, not a sandbox. It catches a value printed as-is, but a command that encodes it (`base64`, `rev`) or sends it somewhere (`curl -d "$MY_TOKEN" ...`) gets past it. `run_command` runs whatever the agent writes with real secrets in its environment, so keep your client's approval prompt on for it, and expose only what the task needs. Values shorter than 6 characters are not redacted.
+
 ## SSH keys management
 `sekrt` also has features that helps you store, manage and transfer all your SSH keys, with the same security paradigm as everything else. 
 ```bash
@@ -359,6 +397,7 @@ sekrt passwd                   change passphrase (re-encrypts everything)
 sekrt status                   vault, remote, session info
 sekrt config                   colors, unlock, clipboard, length (aliases: colors, theme)
 sekrt tui                      open the interactive TUI
+sekrt mcp                      MCP server for AI agents (stdio; never returns a secret)
 ```
 
 Every command has `--help` (e.g. `sekrt add --help`) with the full option list and examples. Where NAME is optional above, omitting the name usually opens an inline TUI.
